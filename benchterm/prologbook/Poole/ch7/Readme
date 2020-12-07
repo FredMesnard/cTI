@@ -1,0 +1,14 @@
+This directory contains programs from Chapter 7 of Poole, Mackworth
+and Goebel, "Computational Intelligence:  A Logical Approach", Oxford
+University Press, 1996. All of these programs are copyright Oxford
+University Press and Poole, Mackworth and Goebel, 1996.
+
+All of these programs have a similar form
+    foo.pl     the main code
+    foo_t.pl   test code (sometimes foo_t1.pl, foo_t2.pl, etc)
+    foo.tr     tracing of the program on the test data (not Prolog readable)
+
+The following programs are present:
+   confl       meta-interpreter to find conflicts
+   confl_id    iterative-deepening meta-interpreter to find minimal conflicts
+   ineq        meta-interpreter to correctly handle inequality

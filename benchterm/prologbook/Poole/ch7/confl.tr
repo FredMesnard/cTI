@@ -1,0 +1,59 @@
+| ?- [confl].
+{consulting /MyDisk/book/code/ch7/confl.pl...}
+{/MyDisk/book/code/ch7/confl.pl consulted, 157 msec 3266 bytes}
+
+yes
+| ?- [confl_t1].
+{consulting /MyDisk/book/code/ch7/confl_t1.pl...}
+{/MyDisk/book/code/ch7/confl_t1.pl consulted, 47 msec 1678 bytes}
+
+yes
+| ?- conflict(C).
+
+C = [e,d] ? ;
+
+C = [s,d] ? ;
+
+C = [e,h] ? ;
+
+C = [s,h] ? ;
+
+C = [e] ? ;
+
+C = [e,e] ? ;
+
+C = [s,e] ? ;
+
+C = [d] ? ;
+
+no
+| ?- conflicts(Cs).
+
+Cs = [[d],[e],[s,h]] ? 
+
+yes
+| ?- ^D
+{ End of SICStus execution, user time 5.124 }
+localhost> prolog
+booting SICStus...please wait
+SICStus 2.1 #2 : Sun Sep 20 16:28:56 PDT 1992
+| ?- [confl_id].
+{consulting /MyDisk/book/code/ch7/confl_id.pl...}
+{/MyDisk/book/code/ch7/confl_id.pl consulted, 172 msec 3558 bytes}
+
+yes
+| ?- [confl_t1].
+{consulting /MyDisk/book/code/ch7/confl_t1.pl...}
+{/MyDisk/book/code/ch7/confl_t1.pl consulted, 63 msec 1678 bytes}
+
+yes
+| ?- conflict(C).
+
+C = [e] ? ;
+
+C = [d] ? ;
+
+C = [s,h] ? ;
+
+no
+| ?- 

@@ -1,0 +1,20 @@
+This directory contains code for Chapter 4 of Poole, Mackworth and
+Goebel, Computational Intelligence, Oxford University Press, 1996.
+Copyright Poole, Mackworth and Goebel and Oxford University Press.
+All rights reserved.
+
+
+The following are all Prolog code:
+search.pl   generic graph searcher
+graph.pl    graph from Section 4.3.1 of the book
+
+csp.pl      constraint satisfaction using arc consistency
+csp_gt.pl   constraint satisfaction using generate and test
+gsat.pl     constraint satisfaction using GSAT
+csp_t1.pl   simple test code for any of the constraint satisfaction code
+csp_t2.pl   scheduling example for any of the constraint satisfaction code
+csp_t3.pl   crossword example for any of the constraint satisfaction code
+
+random.pl   code for generating random numbers and random lists
+standard.pl standard definitions from appendix B
+pq.pl       efficient implementation of priority queues

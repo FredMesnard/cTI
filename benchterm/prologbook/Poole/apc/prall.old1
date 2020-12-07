@@ -1,0 +1,17 @@
+% META INTERPRETER WITH SEARCH
+
+% This uses a different representation for object-level rules
+% `<-' is the object-level `if'
+:- op(1150, xfx, <- ).
+% bodies are represented as lists of atoms
+
+% proveall(
+proveall([],[]).
+proveall([goal([],A)|D],[A|Ans]) :-
+   proveall(D,Ans).
+proveall([goal([G|C],A)|D],Ans) :-
+   allof(goal(NC,A),((G <- B), append(B,C,NC)),S),
+   append(S,D,ND),
+   proveall(ND,Ans).
+
+

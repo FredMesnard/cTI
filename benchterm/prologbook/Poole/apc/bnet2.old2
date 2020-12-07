@@ -1,0 +1,85 @@
+% p(Var,Obs,Dist) is true if Dist represents the
+% probability distribution of P(Var|Obs)
+
+P(Var,Obs,Dist) :-
+   variables(Vs),
+   to_sum_out(Vs,Var,Obs,SO),
+   joint(Vs,Joint),
+   sum_out_each(SO,Obs,Joint,Dist).
+
+to_sum_out(Vs,Var,Obs,SO) :-
+   remove(Var,Vs,RVs),
+   remove_each(Obs,RVs,SO).
+
+remove_each([],SO,SO).
+remove_each([X=_|Os],Vs0,SO) :-
+   remove(X,Vs0,Vs1),
+   remove_each(Os,Vs1,SO).
+
+joint([],[]).
+joint([X|Xs],[p(X,PX)|Js]) :-
+   parents(X,PX),
+   joint(Xs,JXs).
+
+sum_out_each([],_,J,J).
+sum_out_each([X|Xs],Obs,J0,J2) :-
+   sum_out(X,Obs,J0,J1),
+   sum_out_each(Xs,Obs,J1,J2).
+
+sum_out(X,Obs,J0,[NewD|NoX]) :-
+   partition(J0,X,NoX,SomeX),
+   make_dist(SomeX,X,Obs,NewD).
+
+
+partition([],_,[],[]).
+partition([p(X,PX)|R],X,No,[p(X,PX)|Some]) :-
+   !,
+   partiton(R,X,No,Some).
+partition([p(Y,PY)|R],X,No,[p(Y,PY)|Some]) :-
+   member(X,PY),
+   !,
+   partiton(R,X,No,Some).
+partition([p(Y,PY)|R],X,[p(Y,PY)|No],Some) :-
+   !,
+   partiton(R,X,No,Some).
+partition(dist(Vs,Di),X,No,[dist(Vs,Di)|Some]) :-
+   member(X,Vs),
+   !,
+   partiton(R,X,No,Some).
+partition(dist(Vs,Di),X,[dist(Vs,Di)|No],Some) :-
+   partiton(R,X,No,Some).
+
+
+% a clique is of the form dist([x1,..,xn],[[v1,..,vn]:pr, for each vi])
+
+% make_dist(SomeX,X,Obs,NewDs).
+make_dist([],_,_,dist([],[[]:1])).
+make_dist([p(X,XPs)|SomeX],X,Obs,dist(NewDVars,NewDist)) :- !,
+   make_dist(SomeX,X,Obs,dist(DVars,DDist)),
+   variables(AllVars),
+   ordered_union(XPs,DVars,NewDVars,AllVars),
+   add_pr_to_each(XPs,X,D0,[],NewDs).
+
+add_pr_to_each([],_,_,Ds,Ds).
+add_pr_to_each([XPs,X,D0,[],NewDs)
+   
+%  ordered_union(L0,L1,R,RL) is true if R = L0 U L1, where RL
+%  is a reference list that provides the ordering of elements.
+%  L0, L1, RL must all be bound.
+
+ordered_union([],L,L,_) :- !.
+ordered_union(L,[],L,_) :- !.
+ordered_union([E|L0],[E|L1],[E|R],[E|RL]) :- 
+   !,
+   ordered_union(L0,L1,R,RL).
+ordered_union([E|L0],L1,[E|R],[E|RL]) :- 
+   !,
+   ordered_union(L0,L1,R,RL).
+ordered_union(L0,[E|L1],[E|R],[E|RL]) :- 
+   !,
+   ordered_union(L0,L1,R,RL).
+ordered_union(L0,L1,R,[_|RL]) :- 
+   !,
+   ordered_union(L0,L1,R,RL).
+
+

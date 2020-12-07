@@ -1,0 +1,43 @@
+% File SAMPLE2.GLP
+% Michael A. Covington
+% Natural Language Processing for Prolog Programmers
+% (Prentice-Hall)
+% Chapter 5, Section 5.4.4-5.4.5
+
+
+% Sample grammar to be processed by Mini-GULP.
+% Demonstrates number agreement, case assignment,
+% and verb subcategorization.
+
+g_schema(case:X,  [X,_,_]).
+g_schema(num:X,   [_,X,_]).
+g_schema(subcat:X,[_,_,X]).
+
+
+pronoun(case:nom..num:sg) --> [he].
+pronoun(case:acc..num:sg) --> [him].
+pronoun(num:sg)           --> [it].
+pronoun(case:nom..num:pl) --> [they].
+pronoun(case:acc..num:pl) --> [them].
+
+n(num:sg)  -->  [dog]; [cat].
+n(num:pl)  -->  [dogs];[cats].
+
+d(_)       -->  [the].
+d(num:sg)  -->  [a].
+d(num:pl)  -->  [two].
+
+v(num:sg..subcat:1) --> [barks].
+v(num:pl..subcat:1) --> [bark].
+v(num:sg..subcat:2) --> [scares].
+v(num:pl..subcat:2) --> [scare].
+
+np(num:N) --> d(num:N), n(num:N).
+np(num:N..case:C) --> pronoun(num:N..case:C).
+
+vp(num:N) --> v(subcat:1..num:N).
+vp(num:N) --> v(subcat:2..num:N), np(case:acc).
+
+s --> np(case:nom..num:N), vp(num:N).
+
+

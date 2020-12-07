@@ -1,0 +1,90 @@
+% File READCHAR.ARI
+% Michael A. Covington
+% Natural Language Processing for Prolog Programmers
+% (Prentice-Hall)
+% Appendix B
+
+% Special version of read_charlists/1 for Arity Prolog only.
+
+
+% read_charlists(-Charlists)
+%  Reads a line of text, breaking it into a list of lists
+%  of one-character atoms [[l,i,k,e],[t,h,i,s]].
+%  Makes no attempt to recognize numbers.
+
+read_charlists(Charlists) :-
+   read_line(0,Text),      % ARITY PROLOG 5 AND 6
+%  read_string(255,Text),  % ARITY PROLOG 4 ONLY
+   list_text(String,Text),
+   string_charlists(String,Charlists).
+
+
+% string_charlists(+String,-Charlists)
+%  Breaks String up into words,
+%  e.g., " abc def " into [[a,b,c],[d,e,f]].
+
+string_charlists([C|Chars],Charlists) :-           % skip initial blanks
+   char_type(C,blank,_),
+   !,
+   string_charlists(Chars,Charlists).
+
+string_charlists([C|Chars],[Word|Charlists]) :-    % tokenize 1 word
+   extract_word([C|Chars],Rest,Word),
+   string_charlists(Rest,Charlists).
+
+string_charlists([],[]).                           % end of list
+
+
+% extract_word(+String,-Rest,-Word)
+%  Extracts the first Word from String; Rest is rest of String.
+%  Assumes String does not begin with blank.
+
+extract_word([C|Chars],Rest,[Atom|RestOfWord]) :-
+   char_type(C,Type,NewC),
+   name(Atom,[NewC]),
+   extract_word_aux(Type,Chars,Rest,RestOfWord).
+
+extract_word_aux(special,Rest,Rest,[]) :- !.
+   % If Char is special, don't read any more characters.
+
+extract_word_aux(Type,[C|Chars],Rest,[Atom|RestOfWord]) :-
+   char_type(C,Type,NewC),
+   !,
+   name(Atom,[NewC]),
+   extract_word_aux(Type,Chars,Rest,RestOfWord).
+
+extract_word_aux(_,Rest,Rest,[]).
+   % if previous clause did not succeed.
+
+
+% char_type(+Code,?Type,-NewCode)
+%  Given an ASCII code, classifies the character as
+%  'end' (of line/file), 'blank', 'alpha'(numeric), or 'special',
+%  and changes it to a potentially different character (NewCode).
+
+char_type(10,end,10) :- !.         % UNIX end of line mark
+char_type(13,end,13) :- !.         % DOS end of line mark
+char_type(-1,end,-1) :- !.         % get0 end of file code
+
+char_type(Code,blank,32) :-        % blanks, other ctrl codes
+  Code =< 32,
+  !.
+
+char_type(Code,alpha,Code) :-      % digits
+  48 =< Code, Code =< 57,
+  !.
+
+char_type(Code,alpha,Code) :-      % lower-case letters
+
+  97 =< Code, Code =< 122,
+  !.
+
+char_type(Code,alpha,NewCode) :-   % upper-case letters
+  65 =< Code, Code =< 90,
+  !,
+  NewCode is Code + 32.            %  (translate to lower case)
+
+char_type(Code,special,Code).      % all others
+
+
+

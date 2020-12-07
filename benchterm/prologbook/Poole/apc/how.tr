@@ -1,0 +1,33 @@
+| ?- show(lit(L)).
+lit(l2) :-
+   1: light(l2)
+   2: ok(l2)
+   3: live(l2)
+|: 3.
+live(l2) :-
+   1: connected_to(l2,w4)
+   2: live(w4)
+|: 2.
+live(w4) :-
+   1: connected_to(w4,w3)
+   2: live(w3)
+|: 1.
+connected_to(w4,w3) :-
+   1: up(s3)
+|: 1.
+up(s3) is a fact
+connected_to(w4,w3) :-
+   1: up(s3)
+|: up.
+live(w4) :-
+   1: connected_to(w4,w3)
+   2: live(w3)
+|: 2.
+live(w3) :-
+   1: connected_to(w3,w5)
+   2: live(w5)
+|: 1.
+connected_to(w3,w5) :-
+   1: ok(cb1)
+|: retry.
+no

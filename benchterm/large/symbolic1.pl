@@ -1,0 +1,9031 @@
+%:- entry ground(A), integer(B), main(A, B).
+%:- entry ground(A), ground(B), ground(C), integer(D), main(A, B, C, D).
+
+%:- entry show.
+
+%% Dynamic predicates
+
+%'$mem_bound'(X) :- '$top'(X).
+%'$set_access'(X,Y) :- '$top'(X,Y).
+
+%% 980219 Per Mildner.
+%%        Origin unknown, I got it from Mats Calsson at SICS.
+%%        Appears to be a simulator for a prolog machine (this is not 
+%%        the file bamspec in disguise).
+%%        I have replaced occurrences of gc(Goal) with /*gc*/(Goal)
+%%        this is so that the analyzer can se the calls.
+:- prolog_flag(single_var_warnings,_,off).
+
+main :- main_1.
+
+show :-	main.
+
+:- dynamic('$mem_bound'/1).
+:- dynamic('$set_access'/2).
+
+main_1 :- main(allocate00,10).
+main_1 :- main(deallocate00,10).
+main_1 :- main(noop,10).
+main_1 :- main(reset00,10).
+main_1 :- main(jumpxn00,[arg1/v(0,0,0,arg1)],[],[],10).
+main_1 :- main(call00,10).
+main_1 :- main(call00a,10).
+main_1 :- main(execute00,10).
+main_1 :- main(proceed00,10).
+main_1 :- main(get_variable00,[arg1/v(0,0,0,arg1)],[],[],10).
+main_1 :- main(get_variable00a,[arg1/v(0,0,0,arg1)],[],[],10).
+main_1 :- main(get_value00,[arg1/v(0,0,0,arg1)],[],[],19).
+main_1 :- main(get_value00a,[arg1/v(0,0,0,arg1)],[],[],9).
+main_1.
+
+main(MicroStateName,MaxCycle) :-
+	main(MicroStateName,[],[],[],MaxCycle).
+
+main(MicroStateName,UserStartList,RequiredStates,EndStates,MaxCycle) :-
+	write('*** '), write(MicroStateName), write(' ***'), nl,
+	default_state(DefaultStartList),
+	combine_state(UserStartList,DefaultStartList,StartList),
+	state_init(StartState),
+	make_start_state(StartList,StartState),
+	rom(Uaddr,MicroStateName,_),
+	state(uaddr,Uaddr,StartState),
+	mis(MaxCycle,StartState,StartState,RequiredStates,EndStates).
+
+default_state([
+		cycle/0,fail/false,condition/true,
+		arg1/v(arg1tag,arg1cdr,arg1gc,arg1),
+		arg2/v(0,0,0,arg2),
+		arg3/v(0,0,0,arg3),
+%		pdll/pdll('?','?','?','?','?','?','?','?',
+%			'?','?','?','?','?','?','?','?'),
+%		pdlr/pdlr('?','?','?','?','?','?','?','?',
+%			'?','?','?','?','?','?','?','?'),
+		r/v(0,0,0,s),
+		mdr/v(mdrtag,mdrcdr,mdrgc,mdr),
+		mar/v(0,0,0,mar),
+		t1/v(0,0,0,b),
+		t/v(0,0,0,e),
+		h/v(0,0,0,h),
+		s/v(0,0,0,s),
+		h2/v(0,0,0,h2),
+		n/v(0,0,0,n),
+		x(0)/v(x1tag,x1cdr,x1gc,x1),
+		x(1)/v(x2tag,x2cdr,x2gc,x2),
+		x(2)/v(x3tag,x3cdr,x3gc,x3),
+		x(3)/v(x4tag,x4cdr,x4gc,x4),
+		x(4)/v(x5tag,x5cdr,x5gc,x5),
+		x(5)/v(x6tag,x6cdr,x6gc,x6),
+		x(6)/v(x7tag,x7cdr,x7gc,x7),
+		x(7)/v(x8tag,x8cdr,x8gc,x8),
+		x(arg1)/v(xarg1tag,xarg1cdr,xarg1gc,xarg1),
+		x(arg2)/v(xarg2tag,xarg2cdr,xarg2gc,xarg2),
+		reg(0)/v(0,0,0,e),
+		reg(1)/v(0,0,0,tr),
+		reg(2)/v(0,0,0,b),
+		reg(3)/v(cptag,cpcdr,cpgc,cp),
+		reg(4)/v(0,0,0,hb),
+		reg(5)/v('?','?','?','?'),
+		reg(6)/v('?','?','?','?'),
+		reg(7)/v('?','?','?','?'),
+		pdltop/0,pdlbot/0,prevovf/0,
+		cut/cut,umode/umode,cc1/'?',cc0/'?',
+		urp/('?'/'?'),
+		mem/[],newp/[],history/[],collision/[]
+	]).
+
+combine_state([],L,L).
+combine_state([X|L1],L2,L3) :-
+	replace_state(X,L2,L4),
+	combine_state(L1,L4,L3).
+
+replace_state(N/V,[],[N/V]).
+replace_state(N/V,[N/_|T],[N/V|T]) :- !.
+replace_state(NV,[H|T],[H|NT]) :-
+	replace_state(NV,T,NT).
+
+make_start_state([],_).
+make_start_state([N/V|T],State) :-
+	state(N,V,State),
+	make_start_state(T,State).
+
+mis(MaxCycle,StartState,StateIn,RequiredStates,EndStates) :-
+	state_init(StateOut),
+	mi(StateIn,StateOut),		% do microinstruction
+	state(condition,Cond,StateOut),
+	total_simp(Cond,Cond1),
+	\+(Cond1==false),
+	mem_depth(Cond1,MemDepth),
+	mem_bound(MaxMem),
+	MemDepth =< MaxMem,
+	mis2(MaxCycle,StartState,StateOut,RequiredStates,EndStates).
+
+					% print results on IFETCH and fail
+mis2(MaxCycle,StartState,StateOut,RequiredStates,EndStates) :-
+	(state(uaddr,Uaddr,StateOut), Uaddr=='IFETCH' ;
+	 state(fail,Fail,StateOut), Fail==true ;
+	 state(uaddr,Uaddr,StateOut), rom(Uaddr,Name,_),
+	 member(Name,EndStates)), !,
+	state(history,History,StateOut),
+	check_states(RequiredStates,History),
+	print_results(StartState,StateOut), 
+%	get0(_),		% for interactive use
+	fail.
+mis2(MaxCycle,StartState,StateOut,RequiredStates,EndStates) :-
+	state(cycle,Cycle,StateOut),
+	Cycle < MaxCycle,
+	mis(MaxCycle,StartState,StateOut,RequiredStates,EndStates).
+
+check_states([],_).
+check_states([S|SL],H) :-
+	member(S,H),
+	check_states(SL,H).
+
+member(X,[X|_]).
+member(X,[_|T]) :- member(X,T).
+
+print_results(StartState,State1) :-
+	nl, nl,
+	simp(State1,State),		% simplify first
+	state(cycle,Cycle,State),
+	write('cycle count:  '), write(Cycle), nl, nl,
+	state(fail,Fail,State),
+	(Fail == true ->
+		write('Failure'), nl;
+		PrintList = [
+			arg1/arg1,arg2/arg2,arg3/arg3,
+			r/'R',mdr/'MDR',mar/'MAR',
+			t1/'T1',t/'T',h/'H',s/'S',h2/'H2',n/'N',
+			x(0)/'X1',x(1)/'X2',x(2)/'X3',x(3)/'X4',
+			x(4)/'X5',x(5)/'X6',x(6)/'X7',x(7)/'X8',
+			x(arg1)/'X[arg1]',x(arg2)/'X[arg2]',
+			reg(0)/'E',reg(1)/'TR',reg(2)/'B',reg(3)/'CP',
+			reg(4)/'HB',reg(5)/'MISC',reg(6)/'SP',reg(7)/'OSP',
+			pdltop/'PDLtop',pdlbot/'PDLbot',prevovf/'PREVovf',
+			cut/cut,umode/umode,
+			newp/newp
+		],
+		write_state(PrintList,StartState,State)
+	),
+	state(mem,Mem,State),
+	(Mem=[_|_] -> write('memory writes:'), write_mem_list(Mem), nl; true),
+	state(collision,Collision,State),
+	(Collision=[_|_] -> write('collision checks:'),
+		write_collision_list(Collision), nl; true),
+	state(history,History,State),
+	write('history:'), write_history(History,_), nl,
+	state(condition,Condition1,State),
+	total_simp(Condition1,Condition),	% simp repeatedly until stable
+	write('conditions:'), nl, write_condition(Condition), nl.
+
+
+write_mem_list([]).
+write_mem_list([A/V|T]) :- write_mem_list(T),
+	nl, write('  '), write(A), write(':  '), write(V).
+
+write_collision_list([]).
+write_collision_list([C|T]) :- write_collision_list(T),
+	nl, write('  '), write(C).
+
+write_history([],0).
+write_history([H|T],N1) :- write_history(T,N),
+	I is N mod 4, N1 is N + 1,
+	(I = 0 -> nl; true), write('  '), write(H).
+
+write_condition(E1\/E2) :- !, write_condition(E1), write_condition2(E2), nl.
+write_condition(E) :- write_condition2(E), nl.
+
+write_condition2(E1/\E2) :- !, write_condition2(E1), write('  '), write(E2), nl.
+write_condition2(E) :- write('  '), write(E), nl.
+
+write_state([],_,_).
+write_state([N/P|T],SS,S) :-
+	state(N,SV,SS),
+	state(N,V,S),
+	(SV == V ->
+		true;
+		write(P), write(':  '),
+		(var(V) ->
+			write('?');
+			write(V)),
+		nl),
+	write_state(T,SS,S).
+
+
+mem_depth(S,D) :- mem_depth(S,_,D).
+
+mem_depth(A,0,0) :- atomic(A), !.
+mem_depth(V,0,0) :- var(V), !.
+mem_depth([H|T],0,M) :- !,
+	mem_depth(H,_,N1),
+	mem_depth(T,_,N2),
+	max(N1,N2,M).
+mem_depth(mem(E),N1,M1) :- !,
+	mem_depth(E,N,M),
+	N1 is N + 1,
+	max(N1,M,M1).
+mem_depth(S,0,M) :-
+	S =.. [_|L],
+	mem_depth(L,_,M).
+
+mem_bound(X) :- 
+	var(X), !,
+	'$mem_bound'(X).
+mem_bound(X) :-
+	retract('$mem_bound'(_)),
+	assert('$mem_bound'(X)).
+
+
+'$mem_bound'(2).
+
+max(X,Y,X) :- X > Y, !.
+max(X,Y,Y).
+/*
+	Simplification of symbolic expressions
+*/
+
+% total_simp repeatedly calls simp until stable
+%	input expression must not contain unbound variables
+
+total_simp(E1,E3) :- 
+	/*gc*/(simp2(E1,E2)),
+	(E1 == E2 -> E2=E3; total_simp(E2,E3)).
+
+simp(V,V) :- var(V), !.
+simp(A,A) :- atomic(A), !.
+simp([H1|T1],[H2|T2]) :- !,
+	simp(H1,H2),
+	simp(T1,T2).
+simp(v(E1,E2,E3,E4),v(F1,F2,F3,F4)) :- !,
+	simp(E1,F1),simp(E2,F2),
+	simp(E3,F3),simp(E4,F4).
+simp(mem(E1),mem(F1)) :- !, simp(E1,F1).
+simp(E1,E2) :-			% must be structure
+	contains_var(E1), !,	% containing a var somewhere
+	E1 =.. [Op|Arg1],		% this is to protect vars from gc
+	simp(Arg1,Arg2),
+	E2 =.. [Op|Arg2].
+simp(E1,E2) :- /*gc*/(simp2(E1,E2)).	% guarenteed not to contain vars
+
+contains_var(V) :- var(V), !.
+contains_var(A) :- atomic(A), !, fail.
+contains_var([H|T]) :- !, (contains_var(H); contains_var(T)).
+contains_var(V) :- V =.. [H|T], !, contains_var(T).
+
+% skip over variables and atomics
+
+simp2(V,V) :- var(V), !.	% not needed, but left in anyways
+simp2(A,A) :- atomic(A), !.
+
+% do lists element by element
+
+simp2([H1|T1],[H2|T2]) :- !,
+	simp2(H1,H2),
+	simp2(T1,T2).
+
+			% do common structures which can't be reduced
+simp2(v(E1,E2,E3,E4),v(F1,F2,F3,F4)) :- !,
+	simp2(E1,F1),simp2(E2,F2),
+	simp2(E3,F3),simp2(E4,F4).
+simp2(mem(E1),mem(F1)) :- !, simp2(E1,F1).
+
+			% addition
+simp2(0+E1,E2) :- !, simp2(E1,E2).
+simp2(E1+0,E2) :- !, simp2(E1,E2).
+simp2(N1+N2,N3) :- number(N1), number(N2), !, N3 is N1 + N2.
+simp2(E1+N1,E2-N2) :- number(N1), N1 < 0, !, N2 is -N1, simp2(E1,E2).
+simp2((E1+N1)+N2,E2) :- number(N1), number(N2), !,
+	N3 is N1 + N2, simp2(E1+N3,E2).
+simp2((E1-N1)+N2,E2) :- number(N1), number(N2), !,
+	N3 is N2 - N1, simp2(E1+N3,E2).
+simp2(E1+E2,F1+F2) :- !,
+	simp2(E1,F1), simp2(E2,F2).
+
+			% subtraction
+simp2(0-E1,E2) :- !, simp2(-E1,E2).
+simp2(E1-0,E2) :- !, simp2(E1,E2).
+simp2(N1-N2,N3) :- number(N1), number(N2), !, N3 is N1 - N2.
+simp2((E1+N1)-N2,E2) :- number(N1), number(N2), !,
+	N3 is N1 - N2, simp2(E1+N3,E2).
+simp2((E1-N1)-N2,E2) :- number(N1), number(N2), !,
+	N3 is N1 + N2, simp2(E1-N3,E2).
+simp2(E1-E2,F1-F2) :- !,
+	simp2(E1,F1), simp2(E2,F2).
+
+
+			% logical/bitwise and
+simp2(0/\E,0) :- !.
+simp2(E/\0,0) :- !.
+simp2((-1)/\E1,E2) :- !, simp2(E1,E2).
+simp2(E1/\(-1),E2) :- !, simp2(E1,E2).
+
+simp2(true/\E1,E2) :- !, simp2(E1,E2).
+simp2(E1/\true,E2) :- !, simp2(E1,E2).
+simp2(false/\E,false) :- !.
+simp2(E/\false,false) :- !.
+
+simp2(N1/\N2,N3) :- number(N1), number(N2), !, N3 is N1 /\ N2.
+
+simp2(E1/\(E2/\E3),E4) :- !, simp2(E1/\E2/\E3,E4).
+
+simp2(E1/\(E2\/E3),E6) :- !,
+	/*gc*/(simp2(E1/\E2,E4)), /*gc*/(simp2(E1/\E3,E5)),
+	/*gc*/(simp2(E4\/E5,E6)).
+simp2((E1\/E2)/\E3,E6) :- !,
+	/*gc*/(simp2(E1/\E3,E4)), /*gc*/(simp2(E2/\E3,E5)),
+	/*gc*/(simp2(E4\/E5,E6)).
+
+simp2(E1/\E2,E3) :- and_member(E2,E1,_), !, simp2(E1,E3).
+simp2(E1/\E2,false) :- and_member(not(E2),E1,_), !.
+simp2(E1/\not(E2),false) :- and_member(E2,E1,_), !.
+simp2(E1/\(E2==N1),E4) :- number(N1),
+	and_member(not(E2==N2),E1,E3), number(N2),
+	N1 =\= N2, !, simp2(E3/\(E2==N1),E4).
+simp2(E1/\not(E2==N1),E4) :- number(N1),
+	and_member(E2==N2,E1,_), number(N2),
+	N1 =\= N2, !, simp2(E1,E4).
+simp2(E1/\(E2==N1),false) :- number(N1),
+	and_member(E2==N2,E1,_), number(N2),
+	N1 =\= N2, !.
+simp2(E1/\(E2<E3),E5) :- and_member(not(E2==E3),E1,E4), !,
+	simp2(E4/\(E2<E3),E5).
+simp2(E1/\not(E2==E3),E5) :- and_member(E2<E3,E1,_), !,
+	simp2(E1,E5).
+
+simp2(E1/\(E2==E3),E4) :-
+	\+(number(E2)), \+(number(E3)),
+	(
+		and_member(E2==N1,E1,_),
+		number(N1), !,
+		simp2(E1/\(E3==N1),E4);
+
+		and_member(E3==N1,E1,_),
+		number(N1), !,
+		simp2(E1/\(E2==N1),E4)
+	).
+
+simp2(E1/\(v(E2,F1,F2,F3)==v(E3,F4,F5,F6)),
+		E4/\(v(E2,F1,F2,F3)==v(E2,F4,F5,F6))) :-
+	\+(number(E2)), \+(number(E3)),
+	(
+		and_member(E2==N1,E1,_),
+		number(N1), !,
+		simp2(E1/\(E3==N1),E4);
+
+		and_member(E3==N1,E1,_),
+		number(N1), !,
+		simp2(E1/\(E2==N1),E4)
+	).
+
+simp2(E1/\not(E2),E5) :- and_member(E2^E3,E1,E4), !,
+	simp2(E4/\E3/\not(E2),E5).
+simp2(E1/\E2,E5) :- and_member(E2^E3,E1,E4), !,
+	simp2(E4/\not(E3)/\E2,E5).
+
+
+simp2(E1/\E2/\E3,E4/\E5) :- !,
+	remove_not(E2,F2), remove_not(E3,F3),
+%	(compare('<',F2,F3) ->
+	(F2 @< F3 ->
+		simp2(E1/\E3,E4), simp2(E2,E5);
+		simp2(E1/\E2,E4), simp2(E3,E5)).
+simp2(E2/\E3,E4/\E5) :- !,
+	remove_not(E2,F2), remove_not(E3,F3),
+%	(compare('<',F2,F3) ->
+	(F2 @< F3 ->
+		simp2(E3,E4), simp2(E2,E5);
+		simp2(E2,E4), simp2(E3,E5)).
+
+
+			% logical/bitwise or
+simp2((-1)\/E1,-1) :- !.
+simp2(E1\/(-1),-1) :- !.
+simp2(0\/E1,E2) :- !, simp2(E1,E2).
+simp2(E1\/0,E2) :- !, simp2(E1,E2).
+
+simp2(false\/E1,E2) :- !, simp2(E1,E2).
+simp2(E1\/false,E2) :- !, simp2(E1,E2).
+simp2(true\/E,true) :- !.
+simp2(E\/true,true) :- !.
+
+simp2(N1\/N2,N3) :- number(N1), number(N2), !, N3 is N1 \/ N2.
+simp2(E1\/(E2\/E3),E4) :- !, simp2(E1\/E2\/E3,E4).
+simp2(E1\/E2,E3) :- or_member(E2,E1,_), !, simp2(E1,E3).
+
+simp2(E1\/E2\/E3,E4\/E5) :- !,
+	remove_not(E2,F2), remove_not(E3,F3),
+%	(compare('<',F2,F3) ->
+	(F2 @< F3 ->
+		simp2(E1\/E3,E4), simp2(E2,E5);
+		simp2(E1\/E2,E4), simp2(E3,E5)).
+simp2(E2\/E3,E4\/E5) :- !,
+	remove_not(E2,F2), remove_not(E3,F3),
+%	(compare('<',F2,F3) ->
+	(F2 @< F3 ->
+		simp2(E3,E4), simp2(E2,E5);
+		simp2(E2,E4), simp2(E3,E5)).
+
+
+			% logical/bitwise not
+simp2(not(false),true) :- !.
+simp2(not(true),false) :- !.
+simp2(not(N1),N2) :- number(N1), !, N2 is \(N1).
+simp2(not(not(E1)),E2) :- !, simp2(E1,E2).
+simp2(not(E1/\E2),E3) :- !, /*gc*/(simp2(not(E1)\/not(E2),E3)).
+simp2(not(E1\/E2),E3) :- !, /*gc*/(simp2(not(E1)/\not(E2),E3)).
+simp2(not(E==E),false) :- !.
+simp2(not(N1==N2),true) :- number(N1), number(N2), N1 =\= N2, !.
+simp2(not(E1),not(F1)) :- !,
+	simp2(E1,F1).
+
+			% logical/numerical equivalence
+simp2(E==E,true) :- !.
+simp2(N1==N2,false) :- number(N1), number(N2), N1 =\= N2, !.
+simp2(v(E1,E2,E3,E4)==v(E1,E2,E3,E5),E6) :- !, simp2(E4==E5,E6).
+simp2((X+N1)==N2,E) :- number(N1), number(N2), !,
+	N3 is N2 - N1, simp2(X==N3,E).
+simp2((X-N1)==N2,E) :- number(N1), number(N2), !,
+	N3 is N2 + N1, simp2(X==N3,E).
+simp2((N1+X)==N2,E) :- number(N1), number(N2), !,
+	N3 is N2 - N1, simp2(X==N3,E).
+simp2((N1-X)==N2,E) :- number(N1), number(N2), !,
+	N3 is N1 - N2, simp2(X==N3,E).
+simp2(N2==(X+N1),E) :- number(N1), number(N2), !,
+	N3 is N2 - N1, simp2(X==N3,E).
+simp2(N2==(X-N1),E) :- number(N1), number(N2), !,
+	N3 is N2 + N1, simp2(X==N3,E).
+simp2(E1==E2,F1==F2) :- !,
+	simp2(E1,F1), simp2(E2,F2).
+
+simp2(E=\=E,false) :- !.
+simp2(N1=\=N2,true) :- number(N1), number(N2), N1 =\= N2, !.
+simp2(E1=\=E2,not(F1==F2)) :- !,
+	simp2(E1,F1), simp2(E2,F2).
+
+			% logical/bitwise exclusive or
+simp2(N1^N2,N3) :- number(N1), number(N2), !,
+	N3 is ((\(N1))/\N2) \/ (N1/\(\(N2))).
+simp2(E1^0,E2) :- !, simp2(E1,E2).
+simp2(E1^true,E2) :- !, simp2(not(E1),E2).
+simp2(E1^false,E2) :- !, simp2(E1,E2).
+simp2((E1^N1)^N2,E2) :- number(N1), number(N2), !,
+	N3 is ((\(N1))/\N2) \/ (N1/\(\(N2))), !, simp2(E1^N3,E2).
+
+% arbitary structures
+
+simp2(E1,E2) :-
+	E1 =.. [Op|Arg1],
+	simp2(Arg1,Arg2),
+	E2 =.. [Op|Arg2].
+
+
+% remove not from expression
+
+remove_not(not(X),X) :- !.
+remove_not(X,X).
+
+
+% and_member(X,Ein,Eout) succeeds if Ein = E1/\.../\Ei/\X/\Ej/\.../\En
+%	Eout is the conjuctive expression with X removed
+
+and_member(X,X,true) :- !.
+and_member(X,E/\X,E) :- !.
+and_member(X,E1/\E2,E3/\E2) :- and_member(X,E1,E3), !.
+
+or_member(X,X,true) :- !.
+or_member(X,E\/X,E) :- !.
+or_member(X,E1\/E2,E3\/E2) :- or_member(X,E1,E3), !.
+
+mi(StateIn,StateOut) :-
+	bus_init(Bus),
+	state(uaddr,Uaddr1,StateIn),
+	total_simp(Uaddr1,Uaddr),
+	(number(Uaddr) ->	% make sure that any arithmetic is performed
+		true;
+		write('***ERROR*** uaddr: '), write(Uaddr1), nl),
+	rom(Uaddr,StateName,MOS),
+%	write(StateName), nl,
+	state(history,History,StateIn),
+	state(history,[StateName|History],StateOut),
+	mos(MOS,StateIn,Bus,StateOut),
+	move_state(StateIn,StateOut).
+
+mos([],_,_,_).
+mos([MO|MOS],StateIn,Bus,StateOut) :-
+	mo(MO,StateIn,Bus,StateOut),
+	mos(MOS,StateIn,Bus,StateOut).
+
+move_state(StateIn,StateOut) :-		% move unchanged state from In to Out
+	state(cc0,CC0,StateOut),
+	state(cc1,CC1,StateOut),
+	(var(CC0) ->			% cc lasts for only one cycle
+		state(cc0,'?',StateOut);
+		true),
+	(var(CC1) ->
+		state(cc1,'?',StateOut);
+		true),
+	state(cycle,Cycle,StateIn),	% add one to cycle count
+	Cycle1 is Cycle + 1,
+	state(cycle,Cycle1,StateOut),
+	copy_array(pdll,16,StateIn,StateOut),
+	copy_array(pdlr,16,StateIn,StateOut),
+	copy_array(x,8,StateIn,StateOut),
+	copy_array(reg,8,StateIn,StateOut),
+	Names = [
+			condition,fail,arg1,arg2,arg3,
+			r,mdr,mar,t1,t,h,s,h2,n,
+			x(arg1),x(arg2),
+			pdltop,pdlbot,prevovf,
+			cut,umode,urp,newp,mem,collision
+		],
+	copy_value(Names,StateIn,StateOut).	% do remainder of state
+
+copy_array(_,0,_,_) :- !.
+copy_array(Name,Size,StateIn,StateOut) :-
+	Sizem1 is Size - 1,
+	Name2 =.. [Name,Sizem1],
+	state(Name2,Value,StateOut),
+	((var(Value);v_var(Value)) ->
+		state(Name2,OldValue,StateIn),
+		state(Name2,OldValue,StateOut);
+		true),
+	copy_array(Name,Sizem1,StateIn,StateOut).
+
+v_var(v(V1,V2,V3,V4)) :- var(V1), var(V2), var(V3), var(V4).
+
+copy_value([],_,_).
+copy_value([Name|Names],StateIn,StateOut) :-
+	state(Name,Value,StateOut),
+	((var(Value);v_var(Value)) ->
+		state(Name,OldValue,StateIn),
+		state(Name,OldValue,StateOut);
+		true),
+	copy_value(Names,StateIn,StateOut).
+
+mo(contobbus(N),StateIn,Bus,StateOut) :- !,	% CONSTANT -> bbus
+	constant(Con), 
+	N1 is N + 1,
+	arg(N1,Con,C),
+	bus(bbus,C,Bus).
+
+mo(pref1,StateIn,Bus,StateOut) :- !,		% prefetch(1)
+	state(memdatuse,pref1,StateIn),
+	state(arg1,v(newarg1_tag,newarg1_cdr,newarg1_gc,newarg1),StateOut).
+
+mo(arg1torbus,StateIn,Bus,StateOut) :- !,		% arg1 -> rbus
+	state(arg1,Arg1,StateIn),
+	bus(rbus,Arg1,Bus).
+
+mo(arg1tomemdatbus,StateIn,Bus,StateOut) :- !,	% arg1 -> memdatbus
+	state(memdatuse,arg1tomemdatbus,StateIn),
+	state(arg1,Arg1,StateIn),
+	bus(memdatbus,Arg1,Bus).
+
+mo(pref2,StateIn,Bus,StateOut) :- !,		% prefetch(2)
+	state(memdatuse,pref2,StateIn),
+	state(arg2,v(0,0,0,newarg2),StateOut),
+	state(arg3,v(0,0,0,newarg3),StateOut).
+
+mo(arg2tobbus,StateIn,Bus,StateOut) :- !,		% arg2 -> bbus
+	state(arg2,Arg2,StateIn),
+	bus(bbus,Arg2,Bus).
+
+mo(arg3tobbus,StateIn,Bus,StateOut) :- !,		% arg3 -> bbus
+	state(arg3,Arg3,StateIn),
+	bus(bbus,Arg3,Bus).
+
+mo(pdlc(1),StateIn,Bus,StateOut) :- !,		% pdltop -> pdlbot
+	state(pdltop,PDLtop,StateIn),
+	state(pdlbot,PDLtop,StateOut).
+
+mo(pdlc(2),StateIn,Bus,StateOut) :- !,		% pdltop++
+	state(pdltop,PDLtop,StateIn),
+	PDLnew is (PDLtop+1)/\15,
+	state(pdltop,PDLnew,StateOut).
+
+mo(pdlc(3),StateIn,Bus,StateOut) :- !,		% pdltop--
+	state(pdltop,PDLtop,StateIn),
+	PDLnew is (PDLtop-1)/\15,
+	state(pdltop,PDLnew,StateOut).
+	
+mo(pdlc(4),StateIn,Bus,StateOut) :- !,		% pdltop -> pdlbot; pdltop++
+	state(pdltop,PDLtop,StateIn),
+	state(pdlbot,PDLtop,StateOut),
+	PDLnew is (PDLtop+1)/\15,
+	state(pdltop,PDLnew,StateOut).
+	
+mo(pdlc(5),StateIn,Bus,StateOut) :- !,		% pdltop -> pdlbot; pdltop--
+	state(pdltop,PDLtop,StateIn),
+	state(pdlbot,PDLtop,StateOut),
+	PDLnew is (PDLtop-1)/\15,
+	state(pdltop,PDLnew,StateOut).
+	
+mo(pdlc(6),StateIn,Bus,StateOut) :- !,		% 0 -> prevovf
+	state(prevovf,0,StateOut).
+
+mo(pdlc(7),StateIn,Bus,StateOut) :- !,		% Clear pdl
+	state(pdltop,0,StateOut),
+	state(pdlbot,0,StateOut),
+	state(prevovf,0,StateOut).
+
+mo(pdlwrite,StateIn,Bus,StateOut) :- !,		% mdrbus -> PDLl; rbus -> PDLr
+	bus(mdrbus,L,Bus),
+	bus(rbus,R,Bus),
+	state(pdltop,PDL,StateIn),
+	state(pdll(PDL),L,StateOut),
+	state(pdlr(PDL),R,StateOut).
+
+mo(pdlread,StateIn,Bus,StateOut) :- !,		% PDLl -> mdrbus; PDLr -> rbus
+	bus(mdrbus,L,Bus),
+	bus(rbus,R,Bus),
+	state(pdltop,PDL,StateIn),
+	state(pdll(PDL),L,StateIn),
+	state(pdlr(PDL),R,StateIn).
+
+% alu(S,M,Cn)
+
+mo(alu(0,0,1),StateIn,Bus,StateOut) :- !,		% ALU( pass A )
+	bus(abus,A,Bus),
+	bus(alubus,A,Bus).
+
+mo(alu(0,1,1),StateIn,Bus,StateOut) :- !,		% ALU( inc A )
+	bus(abus,v(Atag,Acdr,Agc,A),Bus),
+	simp(A+1,A1),
+	bus(alubus,v(Atag,Acdr,Agc,A1),Bus).
+
+mo(alu(1,0,1),StateIn,Bus,StateOut) :- !,		% ALU( and )
+	bus(abus,v(Atag,Acdr,Agc,A),Bus),
+	bus(bbus,v(Btag,Bcdr,Bgc,B),Bus),
+	simp(v(Atag/\Btag,Acdr/\Bcdr,Agc/\Bgc,A/\B),ALUout),
+	bus(alubus,ALUout,Bus).
+
+mo(alu(3,0,0),StateIn,Bus,StateOut) :- !,		% ALU( pass 0 )
+	bus(alubus,v(0,0,0,0),Bus).
+
+mo(alu(3,1,0),StateIn,Bus,StateOut) :- !,		% ALU( A << 1 )
+	bus(abus,v(_,_,_,A),Bus),
+	bus(alubus,v(0,0,0,A+A),Bus).
+
+mo(alu(5,1,1),StateIn,Bus,StateOut) :- !,		% ALU( - )
+	bus(abus,v(Atag,Acdr,Agc,A),Bus),
+	bus(bbus,v(Btag,Bcdr,Bgc,B),Bus),
+	simp(A<B,CC0),
+	state(cc0,CC0,StateOut),
+%	simp((Atag==Btag)/\(Acdr==Bcdr)/\(Agc==Bgc)/\(A==B),CC1),
+	simp(v(Atag,Acdr,Agc,A)==v(Btag,Bcdr,Bgc,B),CC1),
+	state(cc1,CC1,StateOut),
+% '^' in Cprolog means 'to the power', but here it's used as exclusive or
+	simp(v(not(Atag^Btag),not(Acdr^Bcdr),not(Agc^Bgc),A-B),ALUout),
+	bus(alubus,ALUout,Bus).
+
+mo(alu(8,0,1),StateIn,Bus,StateOut) :- !,		% ALU( or )
+	bus(abus,v(Atag,Acdr,Agc,A),Bus),
+	bus(bbus,v(Btag,Bcdr,Bgc,B),Bus),
+	simp(v(Atag\/Btag,Acdr\/Bcdr,Agc\/Bgc,A\/B),ALUout),
+	bus(alubus,ALUout,Bus).
+
+mo(alu(9,0,1),StateIn,Bus,StateOut) :- !,		% ALU( pass B )
+	bus(bbus,B,Bus),
+	bus(alubus,B,Bus).
+
+mo(alu(10,0,0),StateIn,Bus,StateOut) :- !,		% ALU( xor )
+	bus(abus,v(Atag,Acdr,Agc,A),Bus),
+	bus(bbus,v(Btag,Bcdr,Bgc,B),Bus),
+	simp(v(Atag^Btag,Acdr^Bcdr,Agc^Bgc,A^B),ALUout),
+	bus(alubus,ALUout,Bus).
+
+mo(alu(10,1,0),StateIn,Bus,StateOut) :- !,		% ALU( + )
+	bus(abus,v(Atag,Acdr,Agc,A),Bus),
+	bus(bbus,v(Btag,Bcdr,Bgc,B),Bus),
+%	simp((Atag==Btag)/\(Acdr==Bcdr)/\(Agc==Bgc)/\(A==B),CC1),
+	simp(v(Atag,Acdr,Agc,A)==v(Btag,Bcdr,Bgc,B),CC1),
+	state(cc1,CC1,StateOut),
+	simp(v(Atag^Btag,Acdr^Bcdr,Agc^Bgc,A+B),ALUout),
+	bus(alubus,ALUout,Bus).
+
+mo(alu(15,1,0),StateIn,Bus,StateOut) :- !,		% ALU( dec A )
+	bus(abus,v(Atag,Acdr,Agc,A),Bus),
+	simp(v(not(Atag),not(Acdr),not(Agc),A-1),ALUout),
+	bus(alubus,ALUout,Bus).
+
+mo(mdrbustor,StateIn,Bus,StateOut) :- !,		% mdrbus -> R
+	bus(mdrbus,R,Bus),
+	state(r,R,StateOut).
+
+mo(alubustor,StateIn,Bus,StateOut) :- !,		% alubus -> R
+	bus(alubus,R,Bus),
+	state(r,R,StateOut).
+
+mo(rtobbus,StateIn,Bus,StateOut) :- !,		% R -> bbus
+	state(r,R,StateIn),
+	bus(bbus,R,Bus).
+
+mo(rtorbus,StateIn,Bus,StateOut) :- !,		% R -> rbus
+	state(r,R,StateIn),
+	bus(rbus,R,Bus).
+
+mo(rtomemdatbus,StateIn,Bus,StateOut) :- !,	% R -> memdatbus
+	state(memdatuse,rtomemdatbus,StateIn),
+	state(r,R,StateIn),
+	bus(memdatbus,R,Bus).
+
+mo(mdrbustomdr,StateIn,Bus,StateOut) :- !,		% mdrbus -> MDR
+	bus(mdrbus,MDR,Bus),
+	bus(mdrin,MDR,Bus).
+
+mo(alubustomdr,StateIn,Bus,StateOut) :- !,		% alubus -> MDR
+	bus(alubus,MDR,Bus),
+	bus(mdrin,MDR,Bus).
+
+mo(rbustomdr,StateIn,Bus,StateOut) :- !,		% rbus -> MDR
+	bus(rbus,MDR,Bus),
+	bus(mdrin,MDR,Bus).
+
+mo(t1bustomdr,StateIn,Bus,StateOut) :- !,		% t1bus -> MDR
+	bus(t1bus,MDR,Bus),
+	bus(mdrin,MDR,Bus).
+
+mo(tbustomdr,StateIn,Bus,StateOut) :- !,		% tbus -> MDR
+	bus(tbus,MDR,Bus),
+	bus(mdrin,MDR,Bus).
+
+mo(memdatbustomdr,StateIn,Bus,StateOut) :- !,	% memdatbus -> MDR
+	bus(memdatbus,MDR,Bus),
+	bus(mdrin,MDR,Bus).
+
+mo(ldmdr(0),StateIn,Bus,StateOut) :- !,		% do not load MDR<29:0>
+	state(mdr,v(_,MDRcdr,MDRgc,MDR),StateIn),
+	state(mdr,v(_,MDRcdr,MDRgc,MDR),StateOut).
+	
+mo(ldmdr(1),StateIn,Bus,StateOut) :- !,		% load MDR<29:0>
+	bus(mdrin,v(_,_,MDRgc,MDR),Bus),
+	bus(mdrcdr,v(_,MDRcdr,_,_),Bus),
+	state(mdr,v(_,MDRcdr,MDRgc,MDR),StateOut).
+
+mo(ldmdrtag(0),StateIn,Bus,StateOut) :- !,		% do not load MDR<31:30>
+	state(mdr,v(MDRtag,_,_,_),StateIn),
+	state(mdr,v(MDRtag,_,_,_),StateOut).
+
+mo(ldmdrtag(1),StateIn,Bus,StateOut) :- !,		% load MDR<31:30>
+	bus(mdrtag,v(MDRtag,_,_,_),Bus),
+	state(mdr,v(MDRtag,_,_,_),StateOut).
+
+mo(mdrtag(0,_),StateIn,Bus,StateOut) :- !,	% use MDR<28:0> source for tag
+	bus(mdrin,v(MDRtag,_,_,_),Bus),
+	bus(mdrtag,v(MDRtag,_,_,_),Bus).
+
+mo(mdrtag(1,N),StateIn,Bus,StateOut) :- !,		% N -> MDR<31:30>
+	bus(mdrtag,v(N,_,_,_),Bus).
+
+mo(tcdr(0),StateIn,Bus,StateOut) :- !,		% mdrbus<29> -> MDR<29>
+	bus(mdrbus,MDR,Bus),
+	bus(mdrcdr,MDR,Bus).
+
+mo(tcdr(1),StateIn,Bus,StateOut) :- !,		% tbus<29> -> MDR<29>
+	bus(tbus,MDR,Bus),
+	bus(mdrcdr,MDR,Bus).
+
+mo(tcdr(2),StateIn,Bus,StateOut) :- !,		% t1bus<29> -> MDR<29>
+	bus(t1bus,MDR,Bus),
+	bus(mdrcdr,MDR,Bus).
+
+mo(tcdr(3),StateIn,Bus,StateOut) :- !,		% 1 -> MDR<29>
+	bus(mdrcdr,v(_,1,_,_),Bus).
+
+mo(tcdr(4),StateIn,Bus,StateOut) :- !,		% cut -> MDR<29>
+	state(cut,CUT,StateIn),
+	bus(mdrcdr,v(_,CUT,_,_),Bus).
+
+mo(tcdr(5),StateIn,Bus,StateOut) :- !,		% rbus<29> -> MDR<29>
+	bus(rbus,MDR,Bus),
+	bus(mdrcdr,MDR,Bus).
+
+mo(tcdr(6),StateIn,Bus,StateOut) :- !,		% memdatbus<29> -> MDR<29>
+	bus(memdatbus,MDR,Bus),
+	bus(mdrcdr,MDR,Bus).
+
+mo(tcdr(7),StateIn,Bus,StateOut) :- !,		% MDR<29> -> MDR<29>
+	state(mdr,MDR,StateIn),
+	bus(mdrcdr,MDR,Bus).
+
+mo(mdrtomdrbus(0),StateIn,Bus,StateOut) :- !,		% MDR -> mdrbus
+	state(mdr,MDR,StateIn),
+	bus(mdrbus,MDR,Bus).
+
+mo(mdrtorbus(0),StateIn,Bus,StateOut) :- !,		% MDR -> rbus
+	state(mdr,MDR,StateIn),
+	bus(rbus,MDR,Bus).
+
+mo(mdrtomemdatbus(0),StateIn,Bus,StateOut) :- !,	% MDR -> memdatbus
+	state(memdatuse,mdrtomemdatbus(0),StateIn),
+	state(mdr,MDR,StateIn),
+	bus(memdatbus,MDR,Bus).
+
+mo(mdrtobbus(0),StateIn,Bus,StateOut) :- !,		% MDR -> bbus
+	state(mdr,MDR,StateIn),
+	bus(bbus,MDR,Bus).
+
+mo(mdrtomdrbus(1),StateIn,Bus,StateOut) :- !,		% zerocdr-MDR -> mdrbus
+	state(mdr,v(MDRtag,_,MDRgc,MDR),StateIn),
+	bus(mdrbus,v(MDRtag,0,MDRgc,MDR),Bus).
+
+mo(mdrtorbus(1),StateIn,Bus,StateOut) :- !,		% zerocdr-MDR -> rbus
+	state(mdr,v(MDRtag,_,MDRgc,MDR),StateIn),
+	bus(rbus,v(MDRtag,0,MDRgc,MDR),Bus).
+
+mo(mdrtomemdatbus(1),StateIn,Bus,StateOut) :- !,     % zerocdr-MDR -> memdatbus
+	state(memdatuse,mdrtomemdatbus(1),StateIn),
+	state(mdr,v(MDRtag,_,MDRgc,MDR),StateIn),
+	bus(memdatbus,v(MDRtag,0,MDRgc,MDR),Bus).
+
+mo(mdrtobbus(1),StateIn,Bus,StateOut) :- !,		% zerocdr-MDR -> bbus
+	state(mdr,v(MDRtag,_,MDRgc,MDR),StateIn),
+	bus(bbus,v(MDRtag,0,MDRgc,MDR),Bus).
+
+mo(alubustomar,StateIn,Bus,StateOut) :- !,		% alubus -> MAR
+	bus(alubus,v(_,_,_,MAR),Bus),
+	state(mar,v(0,0,0,MAR),StateOut).
+
+mo(rbustomar,StateIn,Bus,StateOut) :- !,		% rbus -> MAR
+	bus(rbus,v(_,_,_,MAR),Bus),
+	state(mar,v(0,0,0,MAR),StateOut).
+
+mo(t1bustomar,StateIn,Bus,StateOut) :- !,		% t1bus -> MAR
+	bus(t1bus,v(_,_,_,MAR),Bus),
+	state(mar,v(0,0,0,MAR),StateOut).
+
+mo(tbustomar,StateIn,Bus,StateOut) :- !,		% tbus -> MAR
+	bus(tbus,v(_,_,_,MAR),Bus),
+	state(mar,v(0,0,0,MAR),StateOut).
+
+mo(incmar,StateIn,Bus,StateOut) :- !,		% MAR++
+	state(mar,v(_,_,_,MAR),StateIn),
+	simp(MAR+1,MAR1),
+	state(mar,v(0,0,0,MAR1),StateOut).
+
+mo(decmar,StateIn,Bus,StateOut) :- !,		% MAR--
+	state(mar,v(_,_,_,MAR),StateIn),
+	simp(MAR-1,MAR1),
+	state(mar,v(0,0,0,MAR1),StateOut).
+
+mo(martomemdatbus,StateIn,Bus,StateOut) :- !,	% MAR -> memdatbus
+	state(memdatuse,martomemdatbus,StateIn),
+	state(mar,MAR,StateIn),
+	bus(memdatbus,MAR,Bus).
+
+mo(t1inbustomemdatbus,StateIn,Bus,StateOut) :- !,% connect t1inbus and memdatbus
+	state(memdatuse,t1inbustomemdatbus,StateIn),
+	bus(t1inbus,X,Bus),
+	bus(memdatbus,X,Bus).
+
+mo(memdatbustot1inbus,StateIn,Bus,StateOut) :- !,% connect t1inbus and memdatbus
+	bus(t1inbus,X,Bus),
+	bus(memdatbus,X,Bus).
+
+mo(bbustot1,StateIn,Bus,StateOut) :- !,		% bbus -> T1
+	bus(bbus,T1,Bus),
+	state(t1,T1,StateOut).
+
+mo(rbustot1,StateIn,Bus,StateOut) :- !,		% rbus -> T1
+	bus(rbus,T1,Bus),
+	state(t1,T1,StateOut).
+
+mo(t1inbustot1,StateIn,Bus,StateOut) :- !,		% t1inbus -> T1
+	bus(t1inbus,T1,Bus),
+	state(t1,T1,StateOut).
+
+mo(t1tot1bus(0),StateIn,Bus,StateOut) :- !,	% T1 -> t1bus
+	state(t1,T1,StateIn),
+	bus(t1bus,T1,Bus).
+
+mo(t1tobbus(0),StateIn,Bus,StateOut) :- !,		% T1 -> bbus
+	state(t1,T1,StateIn),
+	bus(bbus,T1,Bus).
+	
+mo(t1toabus(0),StateIn,Bus,StateOut) :- !,		% T1 -> abus
+	state(t1,T1,StateIn),
+	bus(abus,T1,Bus).
+
+mo(t1tot1bus(1),StateIn,Bus,StateOut) :- !,	% val-T1 -> t1bus
+	state(t1,v(_,_,_,T1),StateIn),
+	bus(t1bus,v(0,0,0,T1),Bus).
+
+mo(t1tobbus(1),StateIn,Bus,StateOut) :- !,		% val-T1 -> bbus
+	state(t1,v(_,_,_,T1),StateIn),
+	bus(bbus,v(0,0,0,T1),Bus).
+	
+mo(t1toabus(1),StateIn,Bus,StateOut) :- !,		% val-T1 -> abus
+	state(t1,v(_,_,_,T1),StateIn),
+	bus(abus,v(0,0,0,T1),Bus).
+
+mo(mdrbustot,StateIn,Bus,StateOut) :- !,		% mdrbus -> T
+	bus(mdrbus,T,Bus),
+	state(t,T,StateOut).
+
+mo(bbustot,StateIn,Bus,StateOut) :- !,		% bbus -> T
+	bus(bbus,T,Bus),
+	state(t,T,StateOut).
+
+mo(rbustot,StateIn,Bus,StateOut) :- !,		% rbus -> T
+	bus(rbus,T,Bus),
+	state(t,T,StateOut).
+
+mo(tinbustot,StateIn,Bus,StateOut) :- !,		% tinbus -> T
+	bus(tinbus,T,Bus),
+	state(t,T,StateOut).
+
+mo(t1inbustot,StateIn,Bus,StateOut) :- !,		% t1inbus -> T
+	bus(t1inbus,T,Bus),
+	state(t,T,StateOut).
+
+mo(inct,StateIn,Bus,StateOut) :- !,		% T++
+	state(t,v(Ttag,Tcdr,Tgc,T),StateIn),
+	simp(T+1,T1),
+	state(t,v(Ttag,Tcdr,Tgc,T1),StateOut).
+
+mo(dect,StateIn,Bus,StateOut) :- !,		% T--
+	state(t,v(Ttag,Tcdr,Tgc,T),StateIn),
+	simp(T-1,T1),
+	state(t,v(Ttag,Tcdr,Tgc,T1),StateOut).
+
+mo(ttotbus(0),StateIn,Bus,StateOut) :- !,		% T -> tbus
+	state(t,T,StateIn),
+	bus(tbus,T,Bus).
+
+mo(ttomdrbus(0),StateIn,Bus,StateOut) :- !,		% T -> mdrbus
+	state(t,T,StateIn),
+	bus(mdrbus,T,Bus).
+	
+mo(ttobbus(0),StateIn,Bus,StateOut) :- !,		% T -> bbus
+	state(t,T,StateIn),
+	bus(bbus,T,Bus).
+	
+mo(ttoabus(0),StateIn,Bus,StateOut) :- !,		% T -> abus
+	state(t,T,StateIn),
+	bus(abus,T,Bus).
+
+mo(ttotbus(1),StateIn,Bus,StateOut) :- !,		% val-T -> tbus
+	state(t,v(_,_,_,T),StateIn),
+	bus(tbus,v(0,0,0,T),Bus).
+
+mo(ttomdrbus(1),StateIn,Bus,StateOut) :- !,		% val-T -> mdrbus
+	state(t,v(_,_,_,T),StateIn),
+	bus(mdrbus,v(0,0,0,T),Bus).
+	
+mo(ttobbus(1),StateIn,Bus,StateOut) :- !,		% val-T -> bbus
+	state(t,v(_,_,_,T),StateIn),
+	bus(bbus,v(0,0,0,T),Bus).
+	
+mo(ttoabus(1),StateIn,Bus,StateOut) :- !,		% val-T -> abus
+	state(t,v(_,_,_,T),StateIn),
+	bus(abus,v(0,0,0,T),Bus).
+
+mo(mdrbustoh,StateIn,Bus,StateOut) :- !,		% mdrbus -> H
+	bus(mdrbus,H,Bus),
+	state(h,H,StateOut).
+
+mo(rbustoh,StateIn,Bus,StateOut) :- !,		% rbus -> H
+	bus(rbus,H,Bus),
+	state(h,H,StateOut).
+
+mo(tinbustoh,StateIn,Bus,StateOut) :- !,		% tinbus -> H
+	bus(tinbus,H,Bus),
+	state(h,H,StateOut).
+
+mo(inch,StateIn,Bus,StateOut) :- !,		% H++
+	state(h,v(Htag,Hcdr,Hgc,H),StateIn),
+	simp(H+1,H1),
+	state(h,v(Htag,Hcdr,Hgc,H1),StateOut).
+
+mo(dech,StateIn,Bus,StateOut) :- !,		% H--
+	state(h,v(Htag,Hcdr,Hgc,H),StateIn),
+	simp(H-1,H1),
+	state(h,v(Htag,Hcdr,Hgc,H1),StateOut).
+
+mo(htot1inbus,StateIn,Bus,StateOut) :- !,		% H -> t1inbus
+	state(h,H,StateIn),
+	bus(t1inbus,H,Bus).
+	
+mo(htorbus,StateIn,Bus,StateOut) :- !,		% H -> rbus
+	state(h,H,StateIn),
+	bus(rbus,H,Bus).
+	
+mo(htotinbus,StateIn,Bus,StateOut) :- !,		% H -> tinbus
+	state(h,H,StateIn),
+	bus(tinbus,H,Bus).
+
+mo(mdrbustos,StateIn,Bus,StateOut) :- !,		% mdrbus -> S
+	bus(mdrbus,S,Bus),
+	state(s,S,StateOut).
+
+mo(bbustos,StateIn,Bus,StateOut) :- !,		% bbus -> S
+	bus(bbus,S,Bus),
+	state(s,S,StateOut).
+
+mo(incs,StateIn,Bus,StateOut) :- !,		% S++
+	state(s,v(Stag,Scdr,Sgc,S),StateIn),
+	simp(S+1,S1),
+	state(s,v(Stag,Scdr,Sgc,S1),StateOut).
+
+mo(decs,StateIn,Bus,StateOut) :- !,		% S--
+	state(s,v(Stag,Scdr,Sgc,S),StateIn),
+	simp(S-1,S1),
+	state(s,v(Stag,Scdr,Sgc,S1),StateOut).
+
+mo(stomdrbus,StateIn,Bus,StateOut) :- !,		% S -> mdrbus
+	state(s,S,StateIn),
+	bus(mdrbus,S,Bus).
+	
+mo(stot1inbus,StateIn,Bus,StateOut) :- !,		% S -> t1inbus
+	state(s,S,StateIn),
+	bus(t1inbus,S,Bus).
+
+mo(mdrbustoh2,StateIn,Bus,StateOut) :- !,		% mdrbus -> H2
+	bus(mdrbus,H2,Bus),
+	state(h2,H2,StateOut).
+
+mo(rbustoh2,StateIn,Bus,StateOut) :- !,		% rbus -> H2
+	bus(rbus,H2,Bus),
+	state(h2,H2,StateOut).
+
+mo(t1inbustoh2,StateIn,Bus,StateOut) :- !,		% t1inbus -> H2
+	bus(t1inbus,H2,Bus),
+	state(h2,H2,StateOut).
+
+mo(inch2,StateIn,Bus,StateOut) :- !,		% H2++
+	state(h2,v(H2tag,H2cdr,H2gc,H2),StateIn),
+	simp(H2+1,H21),
+	state(h2,v(H2tag,H2cdr,H2gc,H21),StateOut).
+
+mo(dech2,StateIn,Bus,StateOut) :- !,		% H2--
+	state(h2,v(H2tag,H2cdr,H2gc,H2),StateIn),
+	simp(H2-1,H21),
+	state(h2,v(H2tag,H2cdr,H2gc,H21),StateOut).
+
+mo(h2tot1inbus,StateIn,Bus,StateOut) :- !,		% H2 -> t1inbus
+	state(h2,H2,StateIn),
+	bus(t1inbus,H2,Bus).
+	
+mo(h2totinbus,StateIn,Bus,StateOut) :- !,		% H2 -> tinbus
+	state(h2,H2,StateIn),
+	bus(tinbus,H2,Bus).
+
+mo(mdrbuston,StateIn,Bus,StateOut) :- !,		% mdrbus -> N
+	bus(mdrbus,N,Bus),
+	state(n,N,StateOut).
+
+mo(bbuston,StateIn,Bus,StateOut) :- !,		% bbus -> N
+	bus(bbus,N,Bus),
+	state(n,N,StateOut).
+
+mo(ntotinbus,StateIn,Bus,StateOut) :- !,		% N -> tinbus
+	state(n,N,StateIn),
+	bus(tinbus,N,Bus).
+
+mo(ntomdrbus,StateIn,Bus,StateOut) :- !,		% N -> mdrbus
+	state(n,N,StateIn),
+	bus(mdrbus,N,Bus).
+
+mo(mdrbustoregin,StateIn,Bus,StateOut) :- !,	% mdrbus -> REGFILE
+	bus(mdrbus,REG,Bus),
+	bus(regin,REG,Bus).
+
+mo(rbustoregin,StateIn,Bus,StateOut) :- !,		% rbus -> REGFILE
+	bus(rbus,REG,Bus),
+	bus(regin,REG,Bus).
+
+mo(bbustoregin,StateIn,Bus,StateOut) :- !,		% bbus -> REGFILE
+	bus(bbus,REG,Bus),
+	bus(regin,REG,Bus).
+
+mo(regin(0,N),StateIn,Bus,StateOut) :- !,		% AX[N]
+	bus(regin,REG,Bus),
+	state(x(N),REG,StateOut).
+
+mo(regin(1,N),StateIn,Bus,StateOut) :- !,		% machine registers
+	bus(regin,REG,Bus),
+	state(reg(N),REG,StateOut).
+
+mo(regin(2,_),StateIn,Bus,StateOut) :- !,		% AX[arg2]
+	bus(regin,REG,Bus),
+	state(x(arg2),REG,StateOut).
+
+mo(regin(3,_),StateIn,Bus,StateOut) :- !,		% AX[arg1]
+	bus(regin,REG,Bus),
+	state(x(arg1),REG,StateOut).
+
+mo(regtotinbus(0,N),StateIn,Bus,StateOut) :- !,	% AX[N] -> tinbus
+	bus(tinbus,REG,Bus),
+	state(x(N),REG,StateIn).
+
+mo(regtotinbus(1,N),StateIn,Bus,StateOut) :- !,	% machine registers -> tinbus
+	bus(tinbus,REG,Bus),
+	state(reg(N),REG,StateIn).
+
+mo(regtotinbus(2,_),StateIn,Bus,StateOut) :- !,	% AX[arg2] -> tinbus
+	bus(tinbus,REG,Bus),
+	state(x(arg2),REG,StateIn).
+
+mo(regtotinbus(3,_),StateIn,Bus,StateOut) :- !,	% AX[arg1] -> tinbus
+	bus(tinbus,REG,Bus),
+	state(x(arg1),REG,StateIn).
+
+mo(regtot1inbus(0,N),StateIn,Bus,StateOut) :- !,	% AX[N] -> t1inbus
+	bus(t1inbus,REG,Bus),
+	state(x(N),REG,StateIn).
+
+mo(regtot1inbus(1,N),StateIn,Bus,StateOut) :- !,	% machine registers -> t1inbus
+	bus(t1inbus,REG,Bus),
+	state(reg(N),REG,StateIn).
+
+mo(regtot1inbus(2,_),StateIn,Bus,StateOut) :- !,	% AX[arg2] -> t1inbus
+	bus(t1inbus,REG,Bus),
+	state(x(arg2),REG,StateIn).
+
+mo(regtot1inbus(3,_),StateIn,Bus,StateOut) :- !,	% AX[arg1] -> t1inbus
+	bus(t1inbus,REG,Bus),
+	state(x(arg1),REG,StateIn).
+
+mo(collision(tinbus),StateIn,Bus,StateOut) :- !,	% bbus<27:13> == tinbus<27:13>
+	bus(bbus,v(_,_,_,Bbus),Bus),
+	bus(tinbus,v(_,_,_,TINbus),Bus),
+	state(collision,COLL,StateIn),
+	state(collision,[Bbus==TINbus|COLL],StateOut).
+
+mo(collision(t1inbus),StateIn,Bus,StateOut) :- !,	% bbus<27:13> == t1inbus<27:13>
+	bus(bbus,v(_,_,_,Bbus),Bus),
+	bus(t1inbus,v(_,_,_,T1INbus),Bus),
+	state(collision,COLL,StateIn),
+	state(collision,[Bbus==T1INbus|COLL],StateOut).
+
+mo(ldurp,StateIn,Bus,StateOut) :- !,		% nuaddr -> urp
+	bus(nuaddr,NUaddr,Bus),
+	state(urp,NUaddr,StateOut).
+
+mo(pctl(0,N),StateIn,Bus,StateOut) :- !,		% P is 0
+	bus(nuaddr,N/true,Bus).
+
+mo(pctl(1,N),StateIn,Bus,StateOut) :- !,		% P is 1
+	state(cc0,CC0,StateIn),
+	(
+		bus(nuaddr,N/CC0,Bus);
+		bus(nuaddr,(N\/128)/not(CC0),Bus)
+	).
+
+mo(pctl(2,N),StateIn,Bus,StateOut) :- !,		% P is 2
+	state(cc1,CC1,StateIn),
+	(
+		bus(nuaddr,N/CC1,Bus);
+		bus(nuaddr,(N\/128)/not(CC1),Bus)
+	).
+
+mo(pctl(3,N),StateIn,Bus,StateOut) :- !,		% P is 3
+	state(cc0,CC0,StateIn),
+	state(cc1,CC1,StateIn),
+	(
+		bus(nuaddr,N/(CC0\/CC1),Bus);
+		bus(nuaddr,(N\/128)/not(CC0\/CC1),Bus)
+	).
+
+mo(pctl(4,N),StateIn,Bus,StateOut) :- !,		% P is 4
+	(
+		bus(nuaddr,N/y_addr,Bus);
+		bus(nuaddr,(N\/128)/x_addr,Bus)
+	).
+
+mo(pctl(5,N),StateIn,Bus,StateOut) :- !,		% P is 5
+	state(mdr,v(_,MDRcdr,_,_),StateIn),
+	(
+		bus(nuaddr,N/(MDRcdr==1),Bus);
+		bus(nuaddr,(N\/128)/(MDRcdr==0),Bus)
+	).
+
+mo(pctl(6,N),StateIn,Bus,StateOut) :- !,		% P is 6
+	state(umode,MODE,StateIn),
+	(
+		bus(nuaddr,N/(MODE==read),Bus);
+		bus(nuaddr,(N\/128)/(MODE==write),Bus)
+	).
+
+mo(pctl(7,N),StateIn,Bus,StateOut) :- !,		% P is 7
+	state(pdltop,PDLtop,StateIn),
+	state(prevovf,PREVovf,StateIn),
+	(
+		bus(nuaddr,N/((PDLtop==0)/\(PREVovf==0)),Bus);
+		bus(nuaddr,(N\/128)/not((PDLtop==0)/\(PREVovf==0)),Bus)
+	).
+
+mo(pctl(8,N),StateIn,Bus,StateOut) :- !,		% P is 8
+	state(t,v(Ttag,_,_,_),StateIn),
+	(
+		bus(nuaddr,N/(Ttag==2),Bus);
+		bus(nuaddr,(N\/128)/not(Ttag==2),Bus)
+	).
+
+mo(pctl(9,N),StateIn,Bus,StateOut) :- !,		% P is 9
+	state(t,v(Ttag,_,_,_),StateIn),
+	(
+		bus(nuaddr,N/(Ttag==2),Bus);
+		bus(nuaddr,(N\/128)/(Ttag==0),Bus);
+		bus(nuaddr,(N\/256)/((Ttag==1)\/(Ttag==3)),Bus)
+	).
+
+mo(pctl(10,N),StateIn,Bus,StateOut) :- !,		% P is 10
+	state(t,v(Ttag,_,_,_),StateIn),
+	(
+		bus(nuaddr,N/(Ttag==2),Bus);
+		bus(nuaddr,(N\/128)/(Ttag==1),Bus);
+		bus(nuaddr,(N\/256)/((Ttag==0)\/(Ttag==3)),Bus)
+	).
+
+mo(pctl(11,N),StateIn,Bus,StateOut) :- !,		% P is 11
+	state(t,v(Ttag,_,_,_),StateIn),
+	(
+		bus(nuaddr,N/(Ttag==3),Bus);
+		bus(nuaddr,(N\/128)/(Ttag==2),Bus);
+		bus(nuaddr,(N\/256)/(Ttag==0),Bus);
+		bus(nuaddr,(N\/384)/(Ttag==1),Bus)
+	).
+
+mo(pctl(12,N),StateIn,Bus,StateOut) :- !,		% P is 12
+	state(t,v(Ttag,_,_,_),StateIn),
+	(
+		bus(nuaddr,N/(Ttag==3),Bus);
+		bus(nuaddr,(N\/128)/not(Ttag==3),Bus)
+	).
+
+mo(pctl(14,N),StateIn,Bus,StateOut) :- !,		% P is 14
+	state(t,v(Ttag,_,_,_),StateIn),
+	state(t1,v(T1tag,_,_,_),StateIn),
+	(
+		bus(nuaddr,N/(not(Ttag==2)/\not(T1tag==2)),Bus);
+		bus(nuaddr,(N\/128)/((Ttag==2)/\(T1tag==2)),Bus);
+		bus(nuaddr,(N\/256)/((Ttag==2)^(T1tag==2)),Bus)
+	).
+
+mo(pctl(15,N),StateIn,Bus,StateOut) :- !,		% P is 15
+	state(mdr,v(MDRtag,MDRcdr,_,_),StateIn),
+	(
+		bus(nuaddr,N/((MDRcdr==1)/\not(MDRtag==2)),Bus);
+		bus(nuaddr,(N\/128)/((MDRcdr==1)/\(MDRtag==2)),Bus);
+		bus(nuaddr,(N\/256)/(MDRcdr==0),Bus)
+	).
+
+mo(forcead(arg1),StateIn,Bus,StateOut) :- !,
+	state(arg1,v(_,_,_,N),StateIn),
+	bus(usub,N,Bus).
+
+mo(forcead(N),StateIn,Bus,StateOut) :- !,	% N is microaddr of usubroutine
+	bus(usub,N,Bus).
+
+mo(mctl(0),StateIn,Bus,StateOut) :- !,		% M is 0
+	bus(nuaddr,N/C,Bus),
+	state(uaddr,N,StateOut),
+	state(condition,Cin,StateIn),
+	simp(Cin/\C,Cout),
+	state(condition,Cout,StateOut).
+
+mo(mctl(1),StateIn,Bus,StateOut) :- !,		% M is 1
+	state(uaddr,'IFETCH',StateOut).
+
+mo(mctl(2),StateIn,Bus,StateOut) :- !,		% M is 2
+	state(mdr,v(_,MDRcdr,_,_),StateIn),
+	state(condition,Cin,StateIn),
+	bus(nuaddr,N/C,Bus),
+	(
+		state(uaddr,N,StateOut),
+		simp(Cin/\C/\(MDRcdr==1),Cout),
+		state(condition,Cout,StateOut);
+
+		state(uaddr,'IFETCH',StateOut),
+		simp(Cin/\(MDRcdr==0),Cout),
+		state(condition,Cout,StateOut)
+	).
+
+mo(mctl(3),StateIn,Bus,StateOut) :- !,		% M is 3
+	state(condition,Cin,StateIn),
+	state(cc1,CC1,StateIn),
+	state(t,v(Ttag,_,_,_),StateIn),
+	(
+		bus(usub,Usub,Bus),
+		state(uaddr,Usub,StateOut),
+		simp(Cin/\not(CC1)/\(Ttag==2),Cout),
+		state(condition,Cout,StateOut);
+
+		state(urp,R/C,StateIn),
+		state(uaddr,R,StateOut),
+		simp(Cin/\C/\(CC1\/not(Ttag==2)),Cout),
+		state(condition,Cout,StateOut)
+	).
+
+mo(mctl(5),StateIn,Bus,StateOut) :- !,		% M is 5
+	state(condition,Cin,StateIn),
+	state(cc1,CC1,StateIn),
+	(
+		state(uaddr,'IFETCH',StateOut),
+		simp(Cin/\CC1,Cout),
+		state(condition,Cout,StateOut);
+
+		bus(nuaddr,N/C,Bus),
+		state(uaddr,N,StateOut),
+		simp(Cin/\C/\not(CC1),Cout),
+		state(condition,Cout,StateOut)
+	).
+
+mo(mctl(6),StateIn,Bus,StateOut) :- !,		% M is 6
+	state(condition,Cin,StateIn),
+	state(cc1,CC1,StateIn),
+	(
+		bus(usub,Usub,Bus),
+		state(uaddr,Usub,StateOut),
+		simp(Cin/\CC1,Cout),
+		state(condition,Cout,StateOut);
+
+		state(uaddr,'IFETCH',StateOut),
+		simp(Cin/\not(CC1),Cout),
+		state(condition,Cout,StateOut)
+	).
+
+mo(mctl(7),StateIn,Bus,StateOut) :- !,		% M is 7
+	state(mdr,v(_,MDRcdr,_,_),StateIn),
+	state(condition,Cin,StateIn),
+	(
+		bus(usub,Usub,Bus),
+		state(uaddr,Usub,StateOut),
+		simp(Cin/\(MDRcdr==1),Cout),
+		state(condition,Cout,StateOut);
+
+		bus(nuaddr,N/C,Bus),
+		state(uaddr,N,StateOut),
+		simp(Cin/\C/\(MDRcdr==0),Cout),
+		state(condition,Cout,StateOut)
+	).
+
+mo(mctl(12),StateIn,Bus,StateOut) :- !,		% M is 12
+	state(condition,Cin,StateIn),
+	state(cc0,CC0,StateIn),
+	state(cc1,CC1,StateIn),
+	(
+		state(urp,R/C,StateIn),
+		state(uaddr,R,StateOut),
+		simp(Cin/\C/\(CC0\/CC1),Cout),
+		state(condition,Cout,StateOut);
+
+		bus(nuaddr,N/C,Bus),
+		state(uaddr,N,StateOut),
+		simp(Cin/\C/\not(CC0\/CC1),Cout),
+		state(condition,Cout,StateOut)
+	).
+
+mo(mctl(13),StateIn,Bus,StateOut) :- !,		% M is 13
+	bus(usub,Usub,Bus),
+	state(uaddr,Usub,StateOut).
+
+mo(mctl(14),StateIn,Bus,StateOut) :- !,		% M is 14
+	state(condition,Cin,StateIn),
+	state(x(0),v(Xtag,_,_,_),StateIn),
+	(
+		bus(usub,Usub,Bus),
+		state(uaddr,Usub,StateOut),
+		simp(Cin/\(Xtag==2),Cout),
+		state(condition,Cout,StateOut);
+
+		bus(nuaddr,N/C,Bus),
+		state(uaddr,N,StateOut),
+		simp(Cin/\C/\not(Xtag==2),Cout),
+		state(condition,Cout,StateOut)
+	).
+
+mo(mctl(15),StateIn,Bus,StateOut) :- !,		% M is 15
+	state(condition,Cin,StateIn),
+	state(x(arg1),v(Xtag,_,_,_),StateIn),
+	(
+		bus(usub,Usub,Bus),
+		state(uaddr,Usub,StateOut),
+		simp(Cin/\(Xtag==2),Cout),
+		state(condition,Cout,StateOut);
+
+		bus(nuaddr,N/C,Bus),
+		state(uaddr,N,StateOut),
+		simp(Cin/\C/\not(Xtag==2),Cout),
+		state(condition,Cout,StateOut)
+	).
+
+mo(mctl(16),StateIn,Bus,StateOut) :- !,		% M is 16
+	state(condition,Cin,StateIn),
+	state(x(arg2),v(Xtag,_,_,_),StateIn),
+	(
+		bus(usub,Usub,Bus),
+		state(uaddr,Usub,StateOut),
+		simp(Cin/\(Xtag==2),Cout),
+		state(condition,Cout,StateOut);
+
+		bus(nuaddr,N/C,Bus),
+		state(uaddr,N,StateOut),
+		simp(Cin/\C/\not(Xtag==2),Cout),
+		state(condition,Cout,StateOut)
+	).
+
+mo(mctl(17),StateIn,Bus,StateOut) :- !,		% M is 17
+	state(condition,Cin,StateIn),
+	state(mdr,v(MDRtag,_,_,_),StateIn),
+	(
+		bus(usub,Usub,Bus),
+		state(uaddr,Usub,StateOut),
+		simp(Cin/\(MDRtag==2),Cout),
+		state(condition,Cout,StateOut);
+
+		bus(nuaddr,N/C,Bus),
+		state(uaddr,N,StateOut),
+		simp(Cin/\C/\not(MDRtag==2),Cout),
+		state(condition,Cout,StateOut)
+	).
+
+mo(mctl(18),StateIn,Bus,StateOut) :- !,		% M is 18
+	state(condition,Cin,StateIn),
+	state(t,v(Ttag,_,_,_),StateIn),
+	state(t1,v(T1tag,_,_,_),StateIn),
+	(
+		bus(usub,Usub,Bus),
+		state(uaddr,Usub,StateOut),
+		simp(Cin/\not(Ttag==T1tag),Cout),
+		state(condition,Cout,StateOut);
+
+		bus(nuaddr,N/C,Bus),
+		state(uaddr,N,StateOut),
+		simp(Cin/\C/\(Ttag==T1tag),Cout),
+		state(condition,Cout,StateOut)
+	).
+
+mo(mctl(19),StateIn,Bus,StateOut) :- !,		% M is 19
+	state(condition,Cin,StateIn),
+	state(cc1,CC1,StateIn),
+	state(pdltop,PDLtop,StateIn),
+	state(prevovf,PREVovf,StateIn),
+	(
+		bus(usub,Usub,Bus),
+		state(uaddr,Usub,StateOut),
+		simp(Cin/\not(CC1),Cout),
+		state(condition,Cout,StateOut);
+
+		state(uaddr,'IFETCH',StateOut),
+		simp(Cin/\CC1/\(PDLtop==0)/\(PREVovf==0),Cout),
+		state(condition,Cout,StateOut);
+
+		bus(nuaddr,N/C,Bus),
+		state(uaddr,N,StateOut),
+		simp(Cin/\C/\CC1/\not((PDLtop==0)/\(PREVovf==0)),Cout),
+		state(condition,Cout,StateOut)
+	).
+
+mo(mctl(20),StateIn,Bus,StateOut) :- !,		% M is 20
+	state(urp,Urp/C,StateIn),
+	state(uaddr,Urp,StateOut),
+	state(condition,Cin,StateIn),
+	simp(Cin/\C,Cout),
+	state(condition,Cout,StateOut).
+
+mo(ldmode(read),StateIn,Bus,StateOut) :- !,	% read -> mode
+	state(umode,read,StateOut).
+
+mo(ldmode(write),StateIn,Bus,StateOut) :- !,	% write -> mode
+	state(umode,write,StateOut).
+
+mo(ldcutm(0),StateIn,Bus,StateOut) :- !,		% 0 -> cut
+	state(cut,0,StateOut).
+
+mo(ldcutm(1),StateIn,Bus,StateOut) :- !,		% 1 -> cut
+	state(cut,1,StateOut).
+
+mo(newp(N),StateIn,Bus,StateOut) :- !,		% newpN(memdatbus)
+	state(newp,Newp,StateIn),
+	bus(memdatbus,MEMDATbus,Bus),
+	state(newp,[newp(N,MEMDATbus)|Newp],StateOut).
+
+mo(fail,StateIn,Bus,StateOut) :- !,		% failure
+	state(fail,true,StateOut).
+
+mo(memread,StateIn,Bus,StateOut) :- !,		% memory -> memdatbus
+	state(memdatuse,memread,StateIn),
+	state(mar,v(_,_,_,MAR),StateIn),
+	bus(memdatbus,v(memtag(MAR),memcdr(MAR),memgc(MAR),mem(MAR)),Bus).
+
+mo(coderead,StateIn,Bus,StateOut) :- !,		% code -> memdatbus
+	state(memdatuse,coderead,StateIn),
+	state(mar,v(_,_,_,MAR),StateIn),
+	bus(memdatbus,v(codetag(MAR),codecdr(MAR),codegc(MAR),code(MAR)),Bus).
+
+mo(memwrite,StateIn,Bus,StateOut) :- !,		% MDR -> mem(MAR)
+	state(memdatuse,memwrite,StateOut),
+	state(mar,v(_,_,_,MAR),StateOut),
+	state(mdr,MDR,StateOut),
+	state(mem,MEM,StateIn),
+	state(mem,[mem(MAR)/MDR|MEM],StateOut).
+
+mo(codewrite,StateIn,Bus,StateOut) :- !,		% MDR -> code(MAR)
+	state(memdatuse,codewrite,StateOut),
+	state(mar,v(_,_,_,MAR),StateOut),
+	state(mdr,MDR,StateOut),
+	state(mem,MEM,StateIn),
+	state(mem,[code(MAR)/MDR|MEM],StateOut).
+
+mo(ttot1inbus(0),StateIn,Bus,StateOut) :- !,		% T -> t1inbus
+	state(t,T,StateIn),
+	bus(t1inbus,T,Bus).
+
+mo(ttot1inbus(1),StateIn,Bus,StateOut) :- !,		% val-T -> t1inbus
+	state(t,v(_,_,_,T),StateIn),
+	bus(t1inbus,v(0,0,0,T),Bus).
+
+mo(Name,StateIn,_,_) :-
+	write('Unknown microorder: '), nl,
+	write(mo(Name,StateIn,x,x)), nl.
+
+constant(
+	con(
+		v(0,0,1,comm_base),		% 0
+		v(0,0,1,comm_stat_base),	% 1
+		v(0,0,0,-1),			% 2
+		v(0,0,1,extfcn_base),		% 3
+		v(0,0,0,1),			% 4
+		v(0,0,0,h2base),		% 5
+		v(0,0,0,hbase),			% 6
+		v(3,0,0,'NIL'),			% 7
+		v(0,0,0,stkbase),		% 8
+		v(0,0,0,trbase),		% 9
+		v(0,0,0,4),			% 10
+		v(0,0,0,15),			% 11
+		v(0,0,0,2),			% 12
+		v(0,0,0,0),			% 13
+		v(0,0,0,-3),			% 14
+		v(0,0,0,255)			% 15
+	)
+).
+
+/*RB
+gc(Call) :- one_call(Call), set(0,Call), fail.
+gc(Call) :- access(0,Call).
+
+one_call(Call) :- call(Call), !.
+
+set(N,C) :- (retract('$set_access'(N,_)); true), assert('$set_access'(N,C)), !.
+
+access(N,C) :- '$set_access'(N,C), !.
+*/
+
+
+
+% state_init(State)
+%	initializes the State variable
+
+state_init(	state( 		Uaddr, Cycle, Condition, Fail, 		Arg1,Arg2,Arg3, 		pdll(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), 		pdlr(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), 		R,MDR,MAR,T1,T,H,S,H2,N, 		x(_,_,_,_,_,_,_,_),Xarg1,Xarg2, 		reg(_,_,_,_,_,_,_,_), 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,Histroy,Collision,Memdatuse 	)).
+
+
+% state(RegisterName,Value,State)
+%	unifies Value with the appropriate entry in State
+
+state(uaddr,Uaddr,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(cycle,Cycle,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(condition,Condition,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(fail,Fail,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(arg1,Arg1,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(arg2,Arg2,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(arg3,Arg3,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(pdll,PDLlarray,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(pdlr,PDLrarray,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(pdll(M),PDLl,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- number(M), M1 is M + 1, arg(M1,PDLlarray,PDLl), !.
+state(pdlr(M),PDLr,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- number(M), M1 is M + 1, arg(M1,PDLrarray,PDLr), !.
+state(r,R,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(mdr,MDR,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(mar,MAR,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(t1,T1,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(t,T,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(h,H,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(s,S,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(h2,H2,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(n,N,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(x(M),X,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- number(M), M1 is M + 1, arg(M1,Xarray,X), !.
+state(x(arg1),Xarg1,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(x(arg2),Xarg2,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(reg(M),REG,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- number(M), M1 is M + 1, arg(M1,REGarray,REG), !.
+state(pdltop,PDLtop,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(pdlbot,PDLbot,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(prevovf,PREVovf,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(cut,Cut,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(umode,Mode,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(cc1,CC1,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(cc0,CC0,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(urp,URP,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(newp,Newp,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(mem,MEM,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(history,History,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(collision,Collision,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+state(memdatuse,Memdatuse,	state( 		Uaddr, Cycle, Condition, Fail,		Arg1,Arg2,Arg3, 		PDLlarray,PDLrarray, 		R,MDR,MAR,T1,T,H,S,H2,N, 		Xarray,Xarg1,Xarg2, 		REGarray, 		PDLtop,PDLbot,PREVovf, 		Cut,Mode,CC1,CC0, 		URP,Newp,MEM,History,Collision,Memdatuse 	)) :- !.
+
+state(Name,Value,State) :-
+	write('Unknown state name:'), nl, 
+	write(state(Name,Value,State)), nl.
+
+
+
+
+
+
+
+
+
+
+
+
+
+% MDRtag, MDRcdr, and MDRin are pseudo busses used to do the loading of MDR
+% REGin is a pseudo bus for dealing with register file addressing
+% NUaddr is the output of the p selection circuit
+
+
+% bus_init(BusState)
+%	initializes the BusState variable
+
+bus_init(	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)).
+
+
+% bus(BusName,BusValue,BusState)
+%	unifies BusValue with the appropriate entry in BusState
+
+bus(mdrbus,MDRbus,	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)) :- !.
+bus(bbus,Bbus,	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)) :- !.
+bus(alubus,ALUbus,	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)) :- !.
+bus(rbus,Rbus,	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)) :- !.
+bus(abus,Abus,	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)) :- !.
+bus(t1bus,T1bus,	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)) :- !.
+bus(tbus,Tbus,	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)) :- !.
+bus(tinbus,TINbus,	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)) :- !.
+bus(t1inbus,T1INbus,	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)) :- !.
+bus(memdatbus,MEMDATbus,	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)) :- !.
+bus(mdrtag,MDRtag,	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)) :- !.
+bus(mdrcdr,MDRcdr,	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)) :- !.
+bus(mdrin,MDRin,	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)) :- !.
+bus(regin,REGin,	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)) :- !.
+bus(usub,Usub,	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)) :- !.
+bus(nuaddr,NUaddr,	bus( 		MDRbus,Bbus,ALUbus,Rbus,Abus, 		T1bus,Tbus,TINbus,T1INbus,MEMDATbus, 		MDRtag,MDRcdr,MDRin,REGin, 		Usub,NUaddr 	)) :- !.
+
+bus(Name,Value,Bus) :-
+	write('Unknown bus name:'), nl,
+	write(bus(Name,Value,Bus)), nl.
+rom(0,'allocate00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ntotinbus,
+	regtot1inbus(1,0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(5,1,1),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pref1,
+	pctl(0,134)]).
+rom(1,'deallocate00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(4),
+	alu(5,1,1),
+	alubustomar,
+	tcdr(0),
+	pref1,
+	pctl(0,159)]).
+rom(2,'unify_nil_read00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	tcdr(0),
+	pctl(0,108)]).
+rom(3,'fail304a',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(2,272)]).
+rom(4,'noop',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref1,
+	pctl(0,6)]).
+rom(5,'cut01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(14),
+	alu(10,1,0),
+	alubustomar,
+	tcdr(0),
+	pref1,
+	pctl(0,151)]).
+rom(6,'halt',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pctl(0,6)]).
+rom(7,'successhtr',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,93)]).
+rom(8,'switch_on_term02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	pctl(0,136)]).
+rom(9,'get_list02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttot1inbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tbustomar,
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(1,0),
+	tcdr(1),
+	ldmdr(1),ldmdrtag(1),
+	ldmode(write),
+	memwrite,
+	pctl(0,326)]).
+rom(10,'unify_nil_write00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htot1inbus,
+	ttoabus(0),
+	contobbus(7),
+	alu(9,0,1),
+	t1inbustot1,
+	alubustomdr,
+	mdrtag(0,0),
+	tcdr(3),
+	ldmdr(1),ldmdrtag(1),
+	inch,
+	pref1,
+	pctl(0,364)]).
+rom(11,'trust_me_else00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	t1toabus(0),
+	contobbus(11),
+	alu(5,1,1),
+	alubustomar,
+	tcdr(0),
+	ldcutm(0),
+	pref1,
+	pctl(0,154)]).
+rom(12,'get_structure02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1bustomdr,
+	mdrtag(1,1),
+	tcdr(7),
+	ldmdr(1),ldmdrtag(1),
+	inch,
+	ldmode(write),
+	memwrite,
+	pref2,
+	pctl(0,199)]).
+rom(13,'newdecdr02',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,85)]).
+rom(14,'unify03',[
+	forcead(124),
+	mctl(18),
+	ttotbus(1),
+	t1tot1bus(1),
+	ttoabus(1),
+	t1tobbus(1),
+	alu(5,1,1),
+	tbustomar,
+	tcdr(0),
+	pctl(12,304)]).
+rom(15,'unify07b',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	pctl(0,271)]).
+rom(16,'get_nil00',[
+	ldurp,
+	forcead(121),
+	mctl(15),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(3,0),
+	ttoabus(0),
+	contobbus(7),
+	alu(3,0,0),
+	t1inbustot,
+	bbustot1,
+	tcdr(0),
+	pctl(0,307)]).
+rom(17,'get_list00',[
+	ldurp,
+	forcead(121),
+	mctl(15),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(3,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pref1,
+	pctl(0,198)]).
+rom(18,'put_nil00',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(7),
+	alu(3,0,0),
+	bbustoregin,regin(3,0),
+	tcdr(0),
+	pref1,
+	pctl(0,6)]).
+rom(19,'put_list00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomdr,
+	mdrtag(1,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	ldmode(write),
+	pctl(0,178)]).
+rom(20,'unify_cdr00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	rbustot1,
+	tcdr(0),
+	pctl(0,234)]).
+rom(21,'unify_variable_read00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	arg1tomemdatbus,
+	memdatbustot1inbus,
+	alu(3,0,0),
+	t1inbustot1,
+	rbustomar,
+	tcdr(0),
+	pctl(0,370)]).
+rom(22,'coderead00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(3,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pref1,
+	pctl(0,147)]).
+rom(23,'unify_value00',[
+	ldurp,
+	forcead(121),
+	mctl(15),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(3,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pctl(6,312)]).
+rom(24,'unify_void00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	arg1torbus,
+	ttoabus(0),
+	rtobbus,
+	alu(9,0,1),
+	rbustot,
+	alubustomar,
+	tcdr(0),
+	pref1,
+	pctl(6,317)]).
+rom(25,'codewrite00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(3,0),
+	regtot1inbus(0,7),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pref1,
+	pctl(0,150)]).
+rom(26,'loadn00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	pref1,
+	pctl(0,335)]).
+rom(27,'donothing',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(3),
+	alu(9,0,1),
+	alubustomar,
+	tcdr(0),
+	pctl(0,418)]).
+rom(28,'unify_cdr09',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,2),
+	htot1inbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pctl(0,490)]).
+rom(29,'unify_variable_write00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	rbustomdr,
+	mdrtag(1,2),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	inch,
+	pctl(4,61)]).
+rom(30,'deref00',[
+	ldurp,
+	forcead(121),
+	mctl(15),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(3,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pctl(0,444)]).
+rom(31,'unify_value01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustot,
+	tcdr(0),
+	pctl(0,495)]).
+rom(32,'get_variable00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(2,0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(0,0,1),
+	t1inbustot,
+	rbustot1,
+	alubustor,
+	tcdr(0),
+	pctl(4,274)]).
+rom(33,'get_value00',[
+	ldurp,
+	forcead(121),
+	mctl(16),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(2,0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(0,0,1),
+	t1inbustot,
+	rbustot1,
+	alubustor,
+	tcdr(0),
+	pctl(4,273)]).
+rom(34,'put_variable00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htotinbus,
+	htorbus,
+	ttoabus(0),
+	contobbus(8),
+	alu(3,0,0),
+	rbustomar,
+	rbustomdr,
+	mdrtag(1,2),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	inch,
+	memwrite,
+	collision(tinbus),
+	pctl(0,217)]).
+rom(35,'put_value00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(3,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pref1,
+	pctl(0,214)]).
+rom(36,'add00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(3,0),
+	regtot1inbus(2,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pctl(0,132)]).
+rom(37,'sub00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(2,0),
+	regtot1inbus(3,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pctl(0,92)]).
+rom(38,'and00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(3,0),
+	regtot1inbus(2,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pctl(0,397)]).
+rom(39,'or00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(3,0),
+	regtot1inbus(2,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pctl(0,341)]).
+rom(40,'get_variable00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(2,0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(0,0,1),
+	t1inbustot,
+	rbustot1,
+	alubustor,
+	tcdr(0),
+	pctl(4,274)]).
+rom(41,'get_value00',[
+	ldurp,
+	forcead(121),
+	mctl(16),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(2,0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(0,0,1),
+	t1inbustot,
+	rbustot1,
+	alubustor,
+	tcdr(0),
+	pctl(4,273)]).
+rom(42,'put_variable03',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustot,
+	tcdr(0),
+	pctl(0,345)]).
+rom(43,'put_value03',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustot,
+	tcdr(0),
+	pctl(0,344)]).
+rom(44,'put_unsafe_value00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustot,
+	tcdr(0),
+	pctl(0,87)]).
+rom(45,'eor00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(3,0),
+	regtot1inbus(2,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pctl(0,163)]).
+rom(46,'mult00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(1),
+	t1tot1bus(0),
+	regtotinbus(3,0),
+	regtot1inbus(2,0),
+	ttoabus(1),
+	ttobbus(1),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	alubustomar,
+	alubustomdr,
+	mdrtag(1,3),
+	tcdr(1),
+	ldmdr(1),ldmdrtag(1),
+	pref1,
+	pctl(0,406)]).
+rom(47,'try_me_else18',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	memwrite,
+	pctl(0,359)]).
+rom(48,'bind02',[
+	ldurp,
+	forcead(127),
+	mctl(13),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tbustomar,
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(1),
+	ldmdr(1),ldmdrtag(1),
+	memwrite,
+	pctl(7,261)]).
+rom(49,'unify07d',[
+	ldurp,
+	forcead(121),
+	mctl(17),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	pctl(0,177)]).
+rom(50,'unify_cdr08',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	t1tobbus(0),
+	alu(10,1,0),
+	rbustot1,
+	alubustomar,
+	tcdr(0),
+	memwrite,
+	pref1,
+	pctl(0,261)]).
+rom(51,'unify_constant_read05',[
+	ldurp,
+	forcead(127),
+	mctl(13),
+	ttotbus(0),
+	t1tot1bus(0),
+	htorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomdr,
+	mdrtag(1,0),
+	tcdr(7),
+	ldmdr(1),ldmdrtag(1),
+	ldmode(write),
+	memwrite,
+	pctl(0,72)]).
+rom(52,'memread00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(3,0),
+	ttoabus(0),
+	arg3tobbus,
+	alu(3,0,0),
+	t1inbustot1,
+	bbustot,
+	tcdr(0),
+	pctl(0,466)]).
+rom(53,'memwrite00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(3,0),
+	regtot1inbus(2,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pref1,
+	pctl(0,212)]).
+rom(54,'fail302a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	mdrtomemdatbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	decmar,
+	newp(1),
+	pctl(0,310)]).
+rom(55,'fail305a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tbustomar,
+	tcdr(0),
+	pctl(0,311)]).
+rom(56,'unify_unf05',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pdlc(6),
+	pctl(0,184)]).
+rom(57,'unify_value06',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	tcdr(0),
+	pctl(0,496)]).
+rom(58,'unify_value11',[
+	ldurp,
+	forcead(127),
+	mctl(13),
+	ttotbus(0),
+	t1tot1bus(0),
+	htorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomdr,
+	mdrtag(1,0),
+	tcdr(7),
+	ldmdr(1),ldmdrtag(1),
+	ldmode(write),
+	memwrite,
+	pctl(0,241)]).
+rom(59,'ifetch',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,0),
+	regtot1inbus(1,2),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	mdrbustor,
+	tcdr(0),
+	pctl(0,6)]).
+rom(60,'unify_variable_read05',[
+	ldurp,
+	forcead(127),
+	mctl(13),
+	ttotbus(0),
+	t1tot1bus(0),
+	htorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomdr,
+	mdrtag(1,0),
+	tcdr(7),
+	ldmdr(1),ldmdrtag(1),
+	ldmode(write),
+	memwrite,
+	pctl(0,29)]).
+rom(61,'unify_variable_write02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	rbustot1,
+	tcdr(0),
+	memwrite,
+	pref1,
+	pctl(0,243)]).
+rom(62,'unify_void04',[
+	ldurp,
+	forcead(120),
+	mctl(7),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	contobbus(4),
+	alu(3,0,0),
+	rbustot,
+	bbustot1,
+	tcdr(0),
+	pctl(5,63)]).
+rom(63,'unify_void06',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	t1toabus(0),
+	ttobbus(0),
+	alu(0,0,1),
+	alubustor,
+	tcdr(0),
+	incs,
+	pctl(8,320)]).
+rom(64,'unify_constant_read00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	tcdr(0),
+	pctl(0,363)]).
+rom(65,'try_me_else00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htot1inbus,
+	ttoabus(0),
+	t1tobbus(0),
+	alu(5,1,1),
+	t1bustomar,
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	ldcutm(1),
+	pctl(0,358)]).
+rom(66,'retry_me_else00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	arg1torbus,
+	t1toabus(0),
+	contobbus(12),
+	alu(5,1,1),
+	alubustomar,
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	ldcutm(1),
+	memwrite,
+	pref1,
+	pctl(0,261)]).
+rom(67,'fail314',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,5),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	pctl(0,195)]).
+rom(68,'execute00',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	ldcutm(0),
+	pref1,
+	pctl(0,6)]).
+rom(69,'try_me_else00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htot1inbus,
+	ttoabus(0),
+	t1tobbus(0),
+	alu(5,1,1),
+	t1bustomar,
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	ldcutm(1),
+	pctl(0,358)]).
+rom(70,'retry_me_else00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	arg1torbus,
+	t1toabus(0),
+	contobbus(12),
+	alu(5,1,1),
+	alubustomar,
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	ldcutm(1),
+	memwrite,
+	pref1,
+	pctl(0,261)]).
+rom(71,'trust00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	t1toabus(0),
+	contobbus(11),
+	alu(5,1,1),
+	alubustomar,
+	tcdr(0),
+	ldcutm(0),
+	pref1,
+	pctl(0,154)]).
+rom(72,'unify_constant_write00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htot1inbus,
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	inch,
+	pctl(0,282)]).
+rom(73,'cutd01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	arg1torbus,
+	t1toabus(0),
+	contobbus(12),
+	alu(5,1,1),
+	rbustot,
+	alubustomar,
+	tcdr(0),
+	pref1,
+	pctl(0,156)]).
+rom(74,'escape00',[
+	forcead(arg1),
+	mctl(13),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pctl(0,6)]).
+rom(75,'init05',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,5),
+	memdattocon(5),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,203)]).
+rom(76,'jump00',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref1,
+	pctl(0,6)]).
+rom(77,'init12',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(1,4),
+	memdattocon(12),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,205)]).
+rom(78,'jeq01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(5,1,1),
+	tcdr(0),
+	pctl(0,206)]).
+rom(79,'jlt01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(1),
+	t1tot1bus(1),
+	ttoabus(1),
+	t1tobbus(1),
+	alu(5,1,1),
+	tcdr(0),
+	pctl(0,207)]).
+rom(80,'get_constant00',[
+	ldurp,
+	forcead(121),
+	mctl(16),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(2,0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	rbustot1,
+	tcdr(0),
+	pctl(0,307)]).
+rom(81,'get_structure00',[
+	ldurp,
+	forcead(121),
+	mctl(16),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(2,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pctl(0,454)]).
+rom(82,'put_constant00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	pref1,
+	pctl(0,214)]).
+rom(83,'put_structure00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	rbustomdr,
+	mdrtag(1,1),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,470)]).
+rom(84,'call00',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	arg1torbus,
+	ttoabus(0),
+	arg2tobbus,
+	alu(3,0,0),
+	rbustoregin,regin(1,3),
+	bbuston,
+	tcdr(0),
+	ldcutm(0),
+	pref1,
+	pctl(0,6)]).
+rom(85,'newdecdr03',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	mdrtobbus(0),
+	alu(5,1,1),
+	tcdr(0),
+	pctl(0,213)]).
+rom(86,'proceed02',[
+	forcead(125),
+	mctl(6),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref1,
+	pctl(0,6)]).
+rom(87,'put_unsafe_value02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(10,1,0),
+	alubustor,
+	alubustomar,
+	tcdr(0),
+	pref1,
+	pctl(0,215)]).
+rom(88,'put_unsafe_value07a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1bustomar,
+	t1bustomdr,
+	mdrtag(1,2),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pctl(1,281)]).
+rom(89,'put_value07',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	mdrtorbus(0),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	rbustoregin,regin(2,0),
+	mdrbustor,
+	tcdr(0),
+	pref2,
+	pctl(0,6)]).
+rom(90,'lock00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(2,0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	rbustot1,
+	tcdr(0),
+	pctl(0,463)]).
+rom(91,'unlock00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(2,0),
+	regtot1inbus(0,7),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	pref1,
+	pctl(0,244)]).
+rom(92,'sub01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(5,1,1),
+	alubustomar,
+	tcdr(0),
+	pref1,
+	pctl(0,220)]).
+rom(93,'successhtr1',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoh,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,221)]).
+rom(94,'switch_on_constant01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	arg2tobbus,
+	alu(3,1,0),
+	bbustot1,
+	alubustor,
+	tcdr(0),
+	pctl(0,222)]).
+rom(95,'switch_on_structure02',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,223)]).
+rom(96,'x7_to_h2_00',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,7),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustoh2,
+	tcdr(0),
+	pref1,
+	pctl(0,6)]).
+rom(97,'h2_to_x7_00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	h2tot1inbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pref1,
+	pctl(0,399)]).
+rom(98,'x7_to_h_00',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(0,7),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustoh,
+	tcdr(0),
+	pref1,
+	pctl(0,6)]).
+rom(99,'h_to_x7_00',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	htorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,7),
+	tcdr(0),
+	pref1,
+	pctl(0,6)]).
+rom(100,'x7_to_s_00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,7),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pref1,
+	pctl(0,373)]).
+rom(101,'s_to_x7_00',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbustoregin,regin(0,7),
+	tcdr(0),
+	pref1,
+	pctl(0,6)]).
+rom(102,'x7_to_b_00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,7),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	tcdr(0),
+	pref1,
+	pctl(0,500)]).
+rom(103,'b_to_x7_00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,2),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pref1,
+	pctl(0,399)]).
+rom(104,'x7_to_e_00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,7),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pref1,
+	pctl(0,245)]).
+rom(105,'e_to_x7_00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pref1,
+	pctl(0,399)]).
+rom(106,'x7_to_tr_00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,7),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pref1,
+	pctl(0,501)]).
+rom(107,'tr_to_x7_00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,1),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pref1,
+	pctl(0,399)]).
+rom(108,'unify_nil_read01',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,236)]).
+rom(109,'unify_ovf02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(1),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(1),
+	rtobbus,
+	alu(5,1,1),
+	rbustoregin,regin(1,7),
+	tcdr(0),
+	pctl(0,237)]).
+rom(110,'unify_ovf08',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	pdlread,
+	pdlread,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	inct,
+	memwrite,
+	pctl(0,238)]).
+rom(111,'unify_unf02',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	dect,
+	pctl(0,239)]).
+rom(112,'ttomdr',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbustomdr,
+	mdrtag(0,0),
+	tcdr(0),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,6)]).
+rom(113,'unify_value08',[
+	ldurp,
+	forcead(120),
+	mctl(7),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	pctl(5,313)]).
+rom(114,'unify_ovf06',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,6),
+	mdrtomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	mdrbustor,
+	tcdr(0),
+	pdlc(2),
+	pctl(0,493)]).
+rom(115,'unify_ovf00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ntotinbus,
+	regtot1inbus(1,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pctl(0,492)]).
+rom(116,'unify_unf00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,6),
+	regtot1inbus(1,7),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pdlc(1),
+	pctl(0,494)]).
+rom(117,'mdrtoh2',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbustoh2,
+	tcdr(0),
+	pctl(0,6)]).
+rom(118,'exception00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	pswtomemdatbus,
+	alu(3,0,0),
+	tcdr(0),
+	pctl(0,6)]).
+rom(119,'boot00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,145)]).
+rom(120,'newdecdr00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(1),
+	t1tot1bus(0),
+	ttomdrbus(1),
+	ttoabus(1),
+	ttobbus(1),
+	alu(3,0,0),
+	tbustomar,
+	mdrbustos,
+	tcdr(0),
+	pctl(9,13)]).
+rom(121,'dereference400',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tbustomar,
+	tcdr(0),
+	pctl(0,122)]).
+rom(122,'dereference401',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,417)]).
+rom(123,'fail304',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,2),
+	t1toabus(0),
+	ttobbus(0),
+	alu(5,1,1),
+	tbustomar,
+	tcdr(0),
+	collision(t1inbus),
+	pctl(0,3)]).
+rom(124,'fail300',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,2),
+	regtot1inbus(1,1),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pdlc(7),
+	pctl(0,174)]).
+rom(125,'goalsuccess00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(1),
+	alu(9,0,1),
+	alubustomar,
+	tcdr(0),
+	pctl(0,329)]).
+rom(126,'trail501',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htot1inbus,
+	t1toabus(0),
+	rtobbus,
+	alu(5,1,1),
+	t1inbustot1,
+	tcdr(0),
+	pctl(0,353)]).
+rom(127,'trail505',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,2),
+	ttoabus(0),
+	contobbus(2),
+	alu(1,0,1),
+	t1inbustot1,
+	alubustor,
+	tbustomdr,
+	mdrtag(0,0),
+	tcdr(1),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,126)]).
+rom(128,'proceed00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,3),
+	ttoabus(0),
+	ttobbus(0),
+	t1inbustomemdatbus,
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	ldcutm(0),
+	newp(1),
+	pctl(0,469)]).
+rom(129,'reset00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(13),
+	alu(9,0,1),
+	bbuston,
+	bbustoregin,regin(1,3),
+	alubustor,
+	tcdr(0),
+	pctl(0,218)]).
+rom(130,'fail300',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,2),
+	regtot1inbus(1,1),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pdlc(7),
+	pctl(0,174)]).
+rom(131,'boot00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	alubustomar,
+	tcdr(0),
+	pctl(0,146)]).
+rom(132,'add01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(1),
+	t1tot1bus(1),
+	regtot1inbus(1,0),
+	stomdrbus,
+	ttoabus(1),
+	t1tobbus(1),
+	alu(10,1,0),
+	t1inbustot,
+	mdrbustor,
+	alubustomdr,
+	mdrtag(1,3),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pref1,
+	pctl(0,133)]).
+rom(133,'add02',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,2),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustoregin,regin(2,0),
+	tcdr(0),
+	pref2,
+	pctl(0,6)]).
+rom(134,'allocate01a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,2),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(10,1,0),
+	t1inbustot,
+	alubustor,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pref2,
+	pctl(1,260)]).
+rom(135,'successtr',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	incmar,
+	pctl(0,477)]).
+rom(136,'switch_on_term05',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttot1inbus(0),
+	ttoabus(0),
+	contobbus(15),
+	t1inbustomemdatbus,
+	alu(5,1,1),
+	tcdr(0),
+	newp(2),
+	pctl(0,225)]).
+rom(137,'get_list04',[
+	forcead(120),
+	mctl(1),
+	ttotbus(1),
+	t1tot1bus(0),
+	regtotinbus(1,0),
+	regtot1inbus(1,2),
+	ttomdrbus(1),
+	ttoabus(1),
+	ttobbus(1),
+	alu(0,0,1),
+	tinbustot,
+	t1inbustot1,
+	mdrbustos,
+	alubustor,
+	tcdr(0),
+	ldmode(read),
+	pctl(0,6)]).
+rom(138,'allocate07',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,3),
+	ttoabus(0),
+	contobbus(10),
+	alu(10,1,0),
+	t1inbustot1,
+	alubustor,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(4),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,139)]).
+rom(139,'allocate08',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ntotinbus,
+	regtot1inbus(1,1),
+	rtorbus,
+	ttoabus(0),
+	rtobbus,
+	alu(3,0,0),
+	tinbustot,
+	rbustoregin,regin(1,0),
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	collision(t1inbus),
+	pctl(0,396)]).
+rom(140,'get_structure06',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	rtobbus,
+	alu(3,0,0),
+	rbustot1,
+	bbustos,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	ldmode(read),
+	pctl(0,327)]).
+rom(141,'newdecdr01',[
+	forcead(120),
+	mctl(20),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,6)]).
+rom(142,'unify01a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(9,0,1),
+	alubustor,
+	tcdr(0),
+	pctl(1,303)]).
+rom(143,'unify07g',[
+	ldurp,
+	forcead(121),
+	mctl(13),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	mdrtomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	mdrbustor,
+	tcdr(0),
+	pctl(0,232)]).
+rom(144,'jumpxn00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(3,0),
+	ttoabus(0),
+	ttobbus(0),
+	t1inbustomemdatbus,
+	alu(3,0,0),
+	tcdr(0),
+	newp(1),
+	pctl(0,4)]).
+rom(145,'boot01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	tcdr(0),
+	pctl(0,146)]).
+rom(146,'init00',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	memdatbustot1inbus,
+	alu(3,0,0),
+	t1inbustot1,
+	t1inbustot,
+	t1inbustoh2,
+	rbustoregin,regin(0,0),
+	memdattocon(0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pdlc(7),
+	pctl(0,457)]).
+rom(147,'coderead01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tbustomar,
+	tcdr(0),
+	pctl(0,148)]).
+rom(148,'coderead02',[
+	forcead(120),
+	mctl(0),
+	coderead,
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	mdrbustor,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,149)]).
+rom(149,'lock03',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,2),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustoregin,regin(0,7),
+	tcdr(0),
+	pref2,
+	pctl(0,6)]).
+rom(150,'codewrite01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tbustomar,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	codewrite,
+	pref2,
+	pctl(0,261)]).
+rom(151,'cut03',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,152)]).
+rom(152,'cut04',[
+	forcead(120),
+	mctl(2),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(1),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot1,
+	rbustoregin,regin(1,2),
+	tcdr(0),
+	pctl(0,153)]).
+rom(153,'cut05a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	t1toabus(0),
+	contobbus(11),
+	alu(5,1,1),
+	alubustomar,
+	tcdr(0),
+	pctl(0,154)]).
+rom(154,'trust01',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,262)]).
+rom(155,'successm4',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1bustomar,
+	tcdr(0),
+	pctl(0,476)]).
+rom(156,'cutd03',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	t1toabus(0),
+	contobbus(11),
+	alu(5,1,1),
+	alubustomar,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,157)]).
+rom(157,'cutd04',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	mdrtobbus(0),
+	alu(5,1,1),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,158)]).
+rom(158,'cutd05',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot1,
+	rbustoregin,regin(1,2),
+	tcdr(0),
+	pctl(2,262)]).
+rom(159,'deallocate02',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(10),
+	alu(5,1,1),
+	alubustor,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	pctl(0,160)]).
+rom(160,'deallocate03',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	mdrtomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	mdrbuston,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,416)]).
+rom(161,'deallocate05',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	rbustoregin,regin(1,0),
+	mdrbustor,
+	tcdr(0),
+	pref2,
+	pctl(0,6)]).
+rom(162,'dereference403',[
+	forcead(122),
+	mctl(3),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tbustomar,
+	tcdr(0),
+	pctl(0,6)]).
+rom(163,'eor01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(10,0,0),
+	t1inbustot,
+	alubustor,
+	tcdr(0),
+	pref1,
+	pctl(0,398)]).
+rom(164,'escrstat02',[
+	forcead(124),
+	mctl(7),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	pctl(0,420)]).
+rom(165,'ext12',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,1),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	tcdr(0),
+	incmar,
+	pctl(0,421)]).
+rom(166,'ext39',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,4),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	memwrite,
+	pctl(8,266)]).
+rom(167,'ext31',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,7),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	tcdr(0),
+	decmar,
+	pctl(0,423)]).
+rom(168,'ext33',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,5),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	memwrite,
+	pctl(0,424)]).
+rom(169,'ext35',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,3),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	memwrite,
+	pctl(0,425)]).
+rom(170,'ext37',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,1),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	memwrite,
+	pctl(0,426)]).
+rom(171,'extard12',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,1),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	memwrite,
+	pctl(0,427)]).
+rom(172,'extard14',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	memwrite,
+	pctl(0,256)]).
+rom(173,'ext21',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	contobbus(11),
+	alu(10,1,0),
+	rbustot,
+	alubustomar,
+	tcdr(0),
+	pctl(0,422)]).
+rom(174,'fail300a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(8),
+	alu(5,1,1),
+	tcdr(0),
+	fail,
+	pctl(0,430)]).
+rom(175,'try_me_else03',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	rtobbus,
+	alu(10,1,0),
+	alubustor,
+	alubustomar,
+	tcdr(0),
+	memwrite,
+	pctl(0,231)]).
+rom(176,'bind01',[
+	ldurp,
+	forcead(127),
+	mctl(13),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	rbustot,
+	tbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	memwrite,
+	pctl(7,261)]).
+rom(177,'unify12',[
+	forcead(120),
+	mctl(0),
+	ttotbus(1),
+	t1tot1bus(1),
+	ttoabus(1),
+	t1tobbus(1),
+	alu(5,1,1),
+	tcdr(0),
+	pctl(14,14)]).
+rom(178,'unify_cdr03',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,2),
+	mdrtorbus(0),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustoregin,regin(3,0),
+	mdrbustor,
+	tcdr(0),
+	pref1,
+	pctl(0,6)]).
+rom(179,'unify_constant_read06',[
+	ldurp,
+	forcead(121),
+	mctl(17),
+	ttotbus(0),
+	t1tot1bus(0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot1,
+	tcdr(0),
+	incs,
+	pctl(0,307)]).
+rom(180,'switch_on_term00',[
+	ldurp,
+	forcead(121),
+	mctl(14),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	alubustor,
+	tcdr(0),
+	pctl(0,480)]).
+rom(181,'jeq00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(3,0),
+	regtot1inbus(2,0),
+	ttoabus(0),
+	arg3tobbus,
+	alu(9,0,1),
+	tinbustot,
+	t1inbustot1,
+	alubustor,
+	tcdr(0),
+	pctl(0,78)]).
+rom(182,'jlt00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(3,0),
+	regtot1inbus(2,0),
+	ttoabus(0),
+	arg3tobbus,
+	alu(9,0,1),
+	tinbustot,
+	t1inbustot1,
+	alubustor,
+	tcdr(0),
+	pctl(0,79)]).
+rom(183,'jle00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(3,0),
+	regtot1inbus(2,0),
+	ttoabus(0),
+	arg3tobbus,
+	alu(9,0,1),
+	tinbustot,
+	t1inbustot1,
+	alubustor,
+	tcdr(0),
+	pctl(0,334)]).
+rom(184,'unify06',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(1),
+	t1tot1bus(0),
+	ttoabus(1),
+	ttobbus(1),
+	alu(3,0,0),
+	tbustomar,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,487)]).
+rom(185,'unify_value16',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(1),
+	htot1inbus,
+	htorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustomar,
+	tbustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	inch,
+	memwrite,
+	pref1,
+	pctl(8,314)]).
+rom(186,'unify_value12',[
+	ldurp,
+	forcead(121),
+	mctl(17),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot1,
+	tcdr(0),
+	incs,
+	pctl(0,307)]).
+rom(187,'unify_value19',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1bustomar,
+	t1bustomdr,
+	mdrtag(1,2),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	memwrite,
+	pctl(0,497)]).
+rom(188,'unify_variable_read06',[
+	ldurp,
+	forcead(121),
+	mctl(17),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,1),
+	regtot1inbus(1,2),
+	ttoabus(0),
+	rtobbus,
+	alu(3,0,0),
+	t1inbustot1,
+	tcdr(0),
+	incs,
+	collision(tinbus),
+	pctl(4,316)]).
+rom(189,'unify_variable_write01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(3,0),
+	tcdr(0),
+	memwrite,
+	pref1,
+	pctl(0,261)]).
+rom(190,'unify_void03',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(4),
+	alu(5,1,1),
+	tcdr(0),
+	pctl(5,318)]).
+rom(191,'ifetch_pf2',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,0),
+	regtot1inbus(1,2),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	mdrbustor,
+	tcdr(0),
+	pref2,
+	pctl(0,6)]).
+rom(192,'fail305c',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	dect,
+	memwrite,
+	pctl(0,123)]).
+rom(193,'fail310',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(1,3),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	pctl(0,194)]).
+rom(194,'fail311',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(1,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	pctl(0,322)]).
+rom(195,'fail315',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,4),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	pctl(0,323)]).
+rom(196,'fail318',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,1),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	pctl(0,324)]).
+rom(197,'fail321',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoh,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,325)]).
+rom(198,'get_list01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htot1inbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	tcdr(0),
+	pref2,
+	pctl(9,9)]).
+rom(199,'get_structure04',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(1),
+	htot1inbus,
+	rtorbus,
+	ttoabus(0),
+	contobbus(8),
+	alu(3,0,0),
+	t1bustomar,
+	rbustot1,
+	tbustomdr,
+	mdrtag(0,0),
+	tcdr(1),
+	ldmdr(1),ldmdrtag(1),
+	memwrite,
+	collision(t1inbus),
+	pctl(0,326)]).
+rom(200,'get_structure09a',[
+	forcead(120),
+	mctl(5),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,0),
+	stot1inbus,
+	ttoabus(0),
+	contobbus(8),
+	alu(3,0,0),
+	tinbustot,
+	tcdr(0),
+	collision(t1inbus),
+	pctl(0,130)]).
+rom(201,'goalfail01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(1),
+	ttoabus(0),
+	contobbus(7),
+	alu(9,0,1),
+	alubustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	memwrite,
+	pctl(0,27)]).
+rom(202,'init02',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,2),
+	memdattocon(2),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,330)]).
+rom(203,'init06',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,6),
+	memdattocon(6),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,331)]).
+rom(204,'init09',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(1,1),
+	memdattocon(9),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,332)]).
+rom(205,'init13',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(1,5),
+	memdattocon(13),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,333)]).
+rom(206,'jeq02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(1),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	alubustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pctl(2,275)]).
+rom(207,'jlt02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(1),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	alubustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pctl(1,275)]).
+rom(208,'switch_on_constant00',[
+	ldurp,
+	forcead(121),
+	mctl(14),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pctl(0,94)]).
+rom(209,'switch_on_structure00',[
+	ldurp,
+	forcead(121),
+	mctl(14),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pctl(0,478)]).
+rom(210,'lock02',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,149)]).
+rom(211,'memread02',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,467)]).
+rom(212,'memwrite01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	arg3tobbus,
+	alu(10,1,0),
+	alubustomar,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	memwrite,
+	pref2,
+	pctl(0,261)]).
+rom(213,'newdecdr04',[
+	forcead(120),
+	mctl(3),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	pctl(0,6)]).
+rom(214,'put_value01',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	mdrbustoregin,regin(2,0),
+	tcdr(0),
+	pref2,
+	pctl(0,6)]).
+rom(215,'put_unsafe_value03',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,1),
+	ttoabus(0),
+	rtobbus,
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	collision(t1inbus),
+	pctl(0,343)]).
+rom(216,'put_unsafe_value09',[
+	ldurp,
+	forcead(127),
+	mctl(13),
+	ttotbus(0),
+	t1tot1bus(0),
+	htotinbus,
+	mdrtorbus(0),
+	ttoabus(0),
+	contobbus(8),
+	alu(3,0,0),
+	tbustomar,
+	rbustoregin,regin(2,0),
+	tcdr(0),
+	memwrite,
+	collision(tinbus),
+	pctl(0,261)]).
+rom(217,'put_variable01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	rbustoregin,regin(3,0),
+	tcdr(0),
+	pctl(0,342)]).
+rom(218,'reset01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	contobbus(8),
+	rtomemdatbus,
+	alu(9,0,1),
+	bbustoregin,regin(1,0),
+	alubustor,
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	newp(1),
+	pctl(0,474)]).
+rom(219,'reset03',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	contobbus(6),
+	alu(9,0,1),
+	rbustoh2,
+	bbustos,
+	bbustoregin,regin(1,4),
+	alubustor,
+	tcdr(0),
+	pctl(0,475)]).
+rom(220,'sub02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(1),
+	regtot1inbus(1,0),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	martomemdatbus,
+	alu(3,0,0),
+	t1inbustot,
+	mdrbustor,
+	memdatbustomdr,
+	mdrtag(1,3),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,133)]).
+rom(221,'successtr2',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(1,1),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,349)]).
+rom(222,'switch_on_constant02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	arg1torbus,
+	t1toabus(0),
+	rtobbus,
+	alu(1,0,1),
+	rbustot1,
+	alubustor,
+	tcdr(0),
+	pctl(0,350)]).
+rom(223,'switch_on_structure03',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	pctl(0,94)]).
+rom(224,'switch_on_structure04a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(1),
+	t1tot1bus(0),
+	ttoabus(1),
+	mdrtobbus(1),
+	alu(5,1,1),
+	tcdr(0),
+	pctl(0,351)]).
+rom(225,'switch_on_term06a',[
+	forcead(124),
+	mctl(6),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,0),
+	regtot1inbus(1,2),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	mdrbustor,
+	tcdr(0),
+	pref1,
+	pctl(0,6)]).
+rom(226,'trust03',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	rbustoregin,regin(1,4),
+	tcdr(0),
+	pref2,
+	pctl(0,6)]).
+rom(227,'try08',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,3),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,355)]).
+rom(228,'try11',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,6),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,356)]).
+rom(229,'try14',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,3),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,357)]).
+rom(230,'try17',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,0),
+	regtot1inbus(1,2),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,261)]).
+rom(231,'try_me_else04',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,486)]).
+rom(232,'unify07h',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,271)]).
+rom(233,'unify11',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,361)]).
+rom(234,'unify_cdr01a',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,362)]).
+rom(235,'unify_cdr11',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htotinbus,
+	regtot1inbus(1,0),
+	arg1torbus,
+	ttoabus(0),
+	contobbus(8),
+	alu(3,0,0),
+	t1inbustot,
+	rbustot1,
+	t1bustomdr,
+	mdrtag(1,2),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	collision(tinbus),
+	pctl(4,50)]).
+rom(236,'unify_nil_read02',[
+	ldurp,
+	forcead(121),
+	mctl(17),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	contobbus(7),
+	alu(3,0,0),
+	rbustot,
+	bbustot1,
+	tcdr(0),
+	pctl(5,307)]).
+rom(237,'unify_ovf03',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(1,6),
+	tcdr(0),
+	pctl(3,114)]).
+rom(238,'unify_ovf09',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbustoregin,regin(1,6),
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,366)]).
+rom(239,'unify_unf03',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtomdrbus(0),
+	t1toabus(0),
+	ttobbus(0),
+	alu(5,1,1),
+	mdrbustor,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,367)]).
+rom(240,'unify_value03',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,368)]).
+rom(241,'unify_value14',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,5),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pctl(0,185)]).
+rom(242,'unify_ovf04',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbustoregin,regin(1,7),
+	tcdr(0),
+	pctl(0,365)]).
+rom(243,'unify_variable_write03',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(10,1,0),
+	alubustomar,
+	tcdr(0),
+	memwrite,
+	pctl(0,261)]).
+rom(244,'unlock01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	mdrtobbus(0),
+	alu(10,1,0),
+	alubustomar,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	memwrite,
+	pref2,
+	pctl(0,261)]).
+rom(245,'x7_to_e_01',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbustoregin,regin(1,0),
+	tcdr(0),
+	pref2,
+	pctl(0,6)]).
+rom(246,'Btomemdat',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,2),
+	ttoabus(0),
+	ttobbus(0),
+	t1inbustomemdatbus,
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,6)]).
+rom(247,'h2tomdr',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	h2tot1inbus,
+	ttoabus(0),
+	ttobbus(0),
+	t1inbustomemdatbus,
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,6)]).
+rom(248,'mdrtob',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(1,2),
+	tcdr(0),
+	pctl(0,6)]).
+rom(249,'mdrtomemdatbus',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	mdrtomemdatbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pctl(0,6)]).
+rom(250,'mdrtoreg4',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,4),
+	tcdr(0),
+	pctl(0,6)]).
+rom(251,'mdrtot1',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot1,
+	tcdr(0),
+	pctl(0,6)]).
+rom(252,'memwritec',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	codewrite,
+	pctl(0,468)]).
+rom(253,'pswtomdr',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	pswtomemdatbus,
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,6)]).
+rom(254,'rtomdr',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,6)]).
+rom(255,'ttoH2base',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttot1inbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	t1inbustomemdatbus,
+	alu(3,0,0),
+	memdattocon(5),
+	tcdr(0),
+	pctl(0,6)]).
+rom(256,'external_arity0',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	arg1torbus,
+	ttoabus(0),
+	contobbus(1),
+	alu(9,0,1),
+	alubustomar,
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	memwrite,
+	pctl(0,27)]).
+rom(257,'external_arity1',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(1),
+	alu(3,0,0),
+	bbustot,
+	t1bustomdr,
+	mdrtag(1,2),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,428)]).
+rom(258,'external_arity2',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(1),
+	alu(3,0,0),
+	bbustot,
+	t1bustomdr,
+	mdrtag(1,2),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,428)]).
+rom(259,'external_arity3',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(1),
+	alu(3,0,0),
+	bbustot,
+	t1bustomdr,
+	mdrtag(1,2),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,173)]).
+rom(260,'allocate02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,1),
+	regtot1inbus(1,2),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tbustomar,
+	t1inbustot1,
+	tcdr(0),
+	memwrite,
+	collision(tinbus),
+	pctl(0,138)]).
+rom(261,'ifetch',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,0),
+	regtot1inbus(1,2),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	mdrbustor,
+	tcdr(0),
+	pctl(0,6)]).
+rom(262,'trust02',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot1,
+	rbustoregin,regin(1,2),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,226)]).
+rom(263,'success',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,0),
+	regtot1inbus(1,2),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	mdrbustor,
+	tcdr(0),
+	pref1,
+	pctl(0,6)]).
+rom(264,'switch_on_term03',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	arg2tobbus,
+	alu(3,0,0),
+	bbustot,
+	tcdr(0),
+	pctl(0,136)]).
+rom(265,'fail300',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,2),
+	regtot1inbus(1,1),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pdlc(7),
+	pctl(0,174)]).
+rom(266,'external_arity0',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	arg1torbus,
+	ttoabus(0),
+	contobbus(1),
+	alu(9,0,1),
+	alubustomar,
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	memwrite,
+	pctl(0,27)]).
+rom(267,'goalfail00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(1),
+	alu(9,0,1),
+	alubustomar,
+	tcdr(0),
+	pctl(0,201)]).
+rom(268,'fail300',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,2),
+	regtot1inbus(1,1),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pdlc(7),
+	pctl(0,174)]).
+rom(269,'fail300',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,2),
+	regtot1inbus(1,1),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pdlc(7),
+	pctl(0,174)]).
+rom(270,'unify02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(9,0,1),
+	alubustor,
+	tcdr(0),
+	pctl(8,48)]).
+rom(271,'unify07c',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttot1inbus(0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	bbustot,
+	tcdr(0),
+	pctl(5,49)]).
+rom(272,'fail307',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,0),
+	regtot1inbus(1,2),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	mdrbustor,
+	tcdr(0),
+	pref1,
+	pctl(0,6)]).
+rom(273,'get_value05',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	t1toabus(0),
+	rtobbus,
+	alu(10,1,0),
+	alubustor,
+	alubustomar,
+	tcdr(0),
+	pctl(0,328)]).
+rom(274,'get_variable03',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	t1toabus(0),
+	rtobbus,
+	alu(10,1,0),
+	alubustomar,
+	tbustomdr,
+	mdrtag(0,0),
+	tcdr(1),
+	ldmdr(1),ldmdrtag(1),
+	memwrite,
+	pref1,
+	pctl(0,261)]).
+rom(275,'jtrue',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	rtomemdatbus,
+	alu(3,0,0),
+	tcdr(0),
+	newp(2),
+	pctl(0,263)]).
+rom(276,'mult05',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbustoregin,regin(2,0),
+	tcdr(0),
+	pref2,
+	pctl(0,261)]).
+rom(277,'mult04',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(1),
+	t1toabus(1),
+	mdrtobbus(0),
+	alu(10,1,0),
+	alubustomdr,
+	mdrtag(1,3),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pctl(1,279)]).
+rom(278,'mult06',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(7),
+	alu(3,0,0),
+	bbustoregin,regin(2,0),
+	tcdr(0),
+	pref2,
+	pctl(0,261)]).
+rom(279,'mult06',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(7),
+	alu(3,0,0),
+	bbustoregin,regin(2,0),
+	tcdr(0),
+	pref2,
+	pctl(0,261)]).
+rom(280,'put_unsafe_value07',[
+	forcead(120),
+	mctl(0),
+	ttotbus(1),
+	t1tot1bus(0),
+	htot1inbus,
+	ttoabus(1),
+	t1tobbus(0),
+	alu(5,1,1),
+	t1inbustot1,
+	tcdr(0),
+	pctl(0,88)]).
+rom(281,'put_unsafe_value06',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(2,0),
+	tcdr(0),
+	pref2,
+	pctl(0,261)]).
+rom(282,'unify_constant_write01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tbustomar,
+	tcdr(0),
+	memwrite,
+	pref1,
+	pctl(0,261)]).
+rom(283,'switch_on_structure05a',[
+	forcead(120),
+	mctl(0),
+	coderead,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,479)]).
+rom(284,'switch_on_structure07',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttot1inbus(0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(3,0,0),
+	t1bustomar,
+	t1inbustot1,
+	bbustot,
+	tcdr(0),
+	pctl(0,393)]).
+rom(285,'switch_on_structure11',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	incmar,
+	inct,
+	pctl(2,286)]).
+rom(286,'switch_on_structure05a',[
+	forcead(120),
+	mctl(0),
+	coderead,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,479)]).
+rom(287,'trail503',[
+	forcead(120),
+	mctl(20),
+	ttotbus(0),
+	t1tot1bus(0),
+	stot1inbus,
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	mdrbustoregin,regin(1,1),
+	tcdr(0),
+	memwrite,
+	pctl(0,6)]).
+rom(288,'get_variable00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,32)]).
+rom(289,'get_value00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,33)]).
+rom(290,'put_variable00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htotinbus,
+	htorbus,
+	ttoabus(0),
+	contobbus(8),
+	alu(3,0,0),
+	rbustomar,
+	rbustomdr,
+	mdrtag(1,2),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	inch,
+	memwrite,
+	pref2,
+	collision(tinbus),
+	pctl(0,217)]).
+rom(291,'put_value00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(3,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pref2,
+	pctl(0,342)]).
+rom(292,'add00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,36)]).
+rom(293,'sub00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,37)]).
+rom(294,'and00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,38)]).
+rom(295,'or00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,39)]).
+rom(296,'get_variable00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,32)]).
+rom(297,'get_value00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,33)]).
+rom(298,'put_variable03a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustot,
+	tcdr(0),
+	pref2,
+	pctl(0,345)]).
+rom(299,'put_value03a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustot,
+	tcdr(0),
+	pref2,
+	pctl(0,344)]).
+rom(300,'put_unsafe_value00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustot,
+	tcdr(0),
+	pref2,
+	pctl(0,87)]).
+rom(301,'eor00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,45)]).
+rom(302,'mult00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,46)]).
+rom(303,'bind01',[
+	ldurp,
+	forcead(127),
+	mctl(13),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	rbustot,
+	tbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	memwrite,
+	pctl(7,261)]).
+rom(304,'unify04',[
+	forcead(124),
+	mctl(19),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,0),
+	regtot1inbus(1,2),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	mdrbustor,
+	tcdr(0),
+	pctl(0,389)]).
+rom(305,'unify_cdr05',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(0,0,1),
+	t1inbustot,
+	rbustot1,
+	alubustor,
+	tcdr(0),
+	pctl(4,50)]).
+rom(306,'unify_constant_read04',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	pctl(8,51)]).
+rom(307,'unify00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(1),
+	t1tot1bus(1),
+	ttoabus(1),
+	t1tobbus(1),
+	alu(5,1,1),
+	tcdr(0),
+	pref1,
+	pctl(14,14)]).
+rom(308,'memread00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,52)]).
+rom(309,'memwrite00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,53)]).
+rom(310,'fail309',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	pctl(0,193)]).
+rom(311,'fail305b',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,192)]).
+rom(312,'unify_value05',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	mdrbustoregin,regin(3,0),
+	tcdr(0),
+	pctl(0,496)]).
+rom(313,'unify_value10',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	rtobbus,
+	alu(3,0,0),
+	rbustot,
+	bbustoregin,regin(1,5),
+	tcdr(0),
+	pctl(8,58)]).
+rom(314,'unify_value17',[
+	forcead(120),
+	mctl(0),
+	ttotbus(1),
+	t1tot1bus(0),
+	ttoabus(1),
+	contobbus(8),
+	alu(5,1,1),
+	tcdr(0),
+	pctl(0,369)]).
+rom(315,'unify_variable_read04',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,1),
+	mdrtorbus(0),
+	ttoabus(0),
+	rtobbus,
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	collision(t1inbus),
+	pctl(8,60)]).
+rom(316,'unify_variable_read07',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	tbustomdr,
+	mdrtag(0,0),
+	tcdr(1),
+	ldmdr(1),ldmdrtag(1),
+	memwrite,
+	pref1,
+	pctl(0,261)]).
+rom(317,'unify_void01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(4),
+	alu(5,1,1),
+	tcdr(0),
+	pctl(0,446)]).
+rom(318,'unify_void05',[
+	ldurp,
+	forcead(120),
+	mctl(13),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttomdrbus(0),
+	ttoabus(0),
+	contobbus(4),
+	alu(3,0,0),
+	rbustot,
+	mdrbustor,
+	bbustot1,
+	tcdr(0),
+	pctl(0,371)]).
+rom(319,'unify_void06a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	t1toabus(0),
+	rtobbus,
+	alu(10,1,0),
+	alubustor,
+	tcdr(0),
+	pctl(0,320)]).
+rom(320,'unify_void07',[
+	ldurp,
+	forcead(127),
+	mctl(13),
+	ttotbus(0),
+	t1tot1bus(0),
+	htot1inbus,
+	mdrtorbus(0),
+	ttoabus(0),
+	rtobbus,
+	t1inbustomemdatbus,
+	alu(3,0,0),
+	rbustomar,
+	rbustot,
+	bbustoregin,regin(1,5),
+	memdatbustomdr,
+	mdrtag(1,0),
+	tcdr(7),
+	ldmdr(1),ldmdrtag(1),
+	ldmode(write),
+	memwrite,
+	pctl(0,499)]).
+rom(321,'ifetch',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,0),
+	regtot1inbus(1,2),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	mdrbustor,
+	tcdr(0),
+	pctl(0,6)]).
+rom(322,'fail312',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,7),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	pctl(0,450)]).
+rom(323,'fail316',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,3),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	pctl(0,451)]).
+rom(324,'fail319',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	pctl(0,452)]).
+rom(325,'fail303',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	rbustoregin,regin(1,1),
+	tcdr(0),
+	pctl(0,123)]).
+rom(326,'trail500',[
+	ldurp,
+	forcead(126),
+	mctl(13),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,2),
+	t1toabus(0),
+	contobbus(2),
+	alu(1,0,1),
+	t1inbustot1,
+	alubustor,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,261)]).
+rom(327,'get_structure08',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(1),
+	mdrtorbus(0),
+	t1toabus(1),
+	ttobbus(0),
+	alu(0,1,1),
+	rbustot1,
+	alubustor,
+	alubustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pref2,
+	pctl(0,455)]).
+rom(328,'get_value06',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,1),
+	ttoabus(0),
+	rtobbus,
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	collision(t1inbus),
+	pctl(0,456)]).
+rom(329,'goalsuccess01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(1),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	alubustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	memwrite,
+	pctl(0,27)]).
+rom(330,'init03',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,3),
+	memdattocon(3),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,458)]).
+rom(331,'init07',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,7),
+	memdattocon(7),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,459)]).
+rom(332,'init10',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(1,2),
+	memdattocon(10),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,460)]).
+rom(333,'init14',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(1,6),
+	memdattocon(14),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,461)]).
+rom(334,'jle01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(1),
+	t1tot1bus(1),
+	ttoabus(1),
+	t1tobbus(1),
+	alu(5,1,1),
+	tcdr(0),
+	pctl(0,462)]).
+rom(335,'loadn01',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbuston,
+	tcdr(0),
+	pref2,
+	pctl(0,6)]).
+rom(336,'get_constant00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,80)]).
+rom(337,'get_structure00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,81)]).
+rom(338,'put_constant00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	pref2,
+	pctl(0,342)]).
+rom(339,'put_structure00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	rbustomdr,
+	mdrtag(1,1),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	pref2,
+	pctl(0,470)]).
+rom(340,'call00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,84)]).
+rom(341,'or01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(8,0,1),
+	t1inbustot,
+	alubustor,
+	tcdr(0),
+	pref1,
+	pctl(0,398)]).
+rom(342,'put_value02',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	mdrbustoregin,regin(2,0),
+	tcdr(0),
+	pref1,
+	pctl(0,6)]).
+rom(343,'put_unsafe_value04',[
+	ldurp,
+	forcead(121),
+	mctl(17),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	pctl(0,471)]).
+rom(344,'put_value05',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(10,1,0),
+	alubustor,
+	alubustomar,
+	tcdr(0),
+	pref1,
+	pctl(0,472)]).
+rom(345,'put_variable05',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(1),
+	regtotinbus(1,0),
+	regtot1inbus(1,2),
+	ttoabus(0),
+	t1tobbus(1),
+	alu(10,1,0),
+	tinbustot,
+	t1inbustot1,
+	alubustor,
+	alubustomar,
+	alubustomdr,
+	mdrtag(1,2),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	memwrite,
+	pref1,
+	pctl(0,473)]).
+rom(346,'lock00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,90)]).
+rom(347,'unlock00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,91)]).
+rom(348,'successh1',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoh,
+	tcdr(0),
+	incmar,
+	pctl(0,476)]).
+rom(349,'successm2',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(5,282)]).
+rom(350,'switch_on_structure04',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	t1toabus(0),
+	rtobbus,
+	alu(10,1,0),
+	alubustor,
+	alubustomar,
+	tcdr(0),
+	pctl(0,412)]).
+rom(351,'switch_on_structure05',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	incmar,
+	pctl(2,283)]).
+rom(352,'switch_on_structure10',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(1),
+	t1toabus(1),
+	mdrtobbus(1),
+	alu(5,1,1),
+	tcdr(0),
+	pctl(1,285)]).
+rom(353,'trail501a',[
+	forcead(120),
+	mctl(12),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,1),
+	regtot1inbus(1,4),
+	t1toabus(0),
+	rtobbus,
+	alu(5,1,1),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pctl(0,481)]).
+rom(354,'try06',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,1),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustoregin,regin(1,2),
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,482)]).
+rom(355,'try09',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,4),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,483)]).
+rom(356,'try12',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,7),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,484)]).
+rom(357,'try15',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,5),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,485)]).
+rom(358,'try_me_else01a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ntotinbus,
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(0,0,1),
+	tinbustot,
+	rbustoregin,regin(1,5),
+	alubustor,
+	tcdr(0),
+	pref1,
+	pctl(1,47)]).
+rom(359,'try_me_else02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ntotinbus,
+	ttot1inbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,486)]).
+rom(360,'unify09',[
+	ldurp,
+	forcead(121),
+	mctl(17),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttomdrbus(0),
+	ttoabus(0),
+	t1tobbus(0),
+	mdrtomemdatbus(0),
+	memdatbustot1inbus,
+	alu(9,0,1),
+	t1inbustot,
+	pdlwrite,
+	pdlwrite,
+	alubustor,
+	tcdr(0),
+	pctl(0,488)]).
+rom(361,'unify13',[
+	ldurp,
+	forcead(121),
+	mctl(17),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	pctl(0,489)]).
+rom(362,'unify_cdr02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,2),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pctl(5,305)]).
+rom(363,'unify_constant_read01',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,491)]).
+rom(364,'unify_nil_write01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htot1inbus,
+	ttoabus(0),
+	contobbus(8),
+	alu(3,0,0),
+	t1bustomar,
+	tcdr(0),
+	memwrite,
+	pref2,
+	collision(t1inbus),
+	pctl(0,261)]).
+rom(365,'unify_ovf05',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbustoregin,regin(1,6),
+	tcdr(0),
+	pctl(0,114)]).
+rom(366,'unify_ovf10',[
+	ldurp,
+	forcead(121),
+	mctl(17),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(9,0,1),
+	rbustot,
+	alubustor,
+	tcdr(0),
+	pdlc(5),
+	pctl(0,488)]).
+rom(367,'unify_unf04',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttomdrbus(0),
+	ttoabus(0),
+	mdrtobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	rbustot1,
+	mdrbustoregin,regin(1,6),
+	bbustot,
+	tcdr(0),
+	pctl(2,56)]).
+rom(368,'unify_value04',[
+	ldurp,
+	forcead(121),
+	mctl(17),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	pctl(6,57)]).
+rom(369,'unify_value18',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pctl(1,59)]).
+rom(370,'unify_variable_read01',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,498)]).
+rom(371,'unify_void05a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	t1toabus(0),
+	rtobbus,
+	alu(5,1,1),
+	rbustot,
+	tcdr(0),
+	incmar,
+	incs,
+	pctl(8,319)]).
+rom(372,'writepdl01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	pdlwrite,
+	pdlwrite,
+	tcdr(0),
+	pctl(0,6)]).
+rom(373,'x7_to_s_01',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	mdrbustor,
+	mdrbustos,
+	tcdr(0),
+	pref2,
+	pctl(0,6)]).
+rom(374,'H2basetot',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(5),
+	alu(3,0,0),
+	bbustot,
+	tcdr(0),
+	pctl(0,112)]).
+rom(375,'htomdr',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,6)]).
+rom(376,'mdrtoh',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoh,
+	tcdr(0),
+	pctl(0,6)]).
+rom(377,'mdrton',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbuston,
+	tcdr(0),
+	pctl(0,6)]).
+rom(378,'mdrtos',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbustos,
+	tcdr(0),
+	pctl(0,6)]).
+rom(379,'memreadc',[
+	forcead(120),
+	mctl(0),
+	coderead,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,6)]).
+rom(380,'memwrited',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	memwrite,
+	pctl(0,468)]).
+rom(381,'readpdl',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	pdlread,
+	pdlread,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbustot,
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	pdlc(3),
+	pctl(0,6)]).
+rom(382,'stomdr',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbustomdr,
+	mdrtag(0,0),
+	tcdr(0),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,6)]).
+rom(383,'ttoTRbase',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttot1inbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	t1inbustomemdatbus,
+	alu(3,0,0),
+	memdattocon(9),
+	tcdr(0),
+	pctl(0,6)]).
+rom(384,'externalard_arity0',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,4),
+	ttoabus(0),
+	contobbus(1),
+	alu(3,0,0),
+	t1inbustot1,
+	bbustot,
+	tcdr(0),
+	pctl(0,429)]).
+rom(385,'externalard_arity1',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(1),
+	alu(3,0,0),
+	bbustot,
+	t1bustomdr,
+	mdrtag(1,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,428)]).
+rom(386,'externalard_arity2',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(1),
+	alu(3,0,0),
+	bbustot,
+	t1bustomdr,
+	mdrtag(1,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,428)]).
+rom(387,'externalard_arity3',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(1),
+	alu(3,0,0),
+	bbustot,
+	t1bustomdr,
+	mdrtag(1,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,173)]).
+rom(388,'allocate04',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,1),
+	regtot1inbus(1,2),
+	rtorbus,
+	ttoabus(0),
+	rtobbus,
+	alu(3,0,0),
+	t1inbustot1,
+	rbustomar,
+	rbustot,
+	tcdr(0),
+	memwrite,
+	collision(tinbus),
+	pctl(0,138)]).
+rom(389,'unify05',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	pdlread,
+	pdlread,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	rbustot1,
+	mdrbustot,
+	tcdr(0),
+	pdlc(3),
+	pctl(0,184)]).
+rom(390,'cutd07',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	t1toabus(0),
+	contobbus(12),
+	alu(5,1,1),
+	alubustomar,
+	tcdr(0),
+	pctl(0,156)]).
+rom(391,'successh',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,348)]).
+rom(392,'switch_on_term04',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	arg3tobbus,
+	alu(3,0,0),
+	bbustot,
+	tcdr(0),
+	pctl(0,136)]).
+rom(393,'switch_on_structure09',[
+	forcead(120),
+	mctl(0),
+	coderead,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	rtobbus,
+	alu(5,1,1),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,352)]).
+rom(394,'extard11',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,2),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	memwrite,
+	pctl(0,171)]).
+rom(395,'fail302',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(4),
+	alu(5,1,1),
+	alubustor,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,54)]).
+rom(396,'allocate09',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	stot1inbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	tbustomdr,
+	mdrtag(0,0),
+	tcdr(1),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,261)]).
+rom(397,'and01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(1,0,1),
+	t1inbustot,
+	alubustor,
+	tcdr(0),
+	pref1,
+	pctl(0,398)]).
+rom(398,'and02',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,2),
+	rtorbus,
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustoregin,regin(2,0),
+	mdrbustor,
+	tcdr(0),
+	pref2,
+	pctl(0,6)]).
+rom(399,'e_to_x7_01',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	mdrbustoregin,regin(0,7),
+	tcdr(0),
+	pref2,
+	pctl(0,6)]).
+rom(400,'fail305',[
+	forcead(123),
+	mctl(17),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	tcdr(0),
+	dect,
+	memwrite,
+	pctl(0,55)]).
+rom(401,'get_value01',[
+	ldurp,
+	forcead(121),
+	mctl(15),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(3,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	bbustot1,
+	bbustoregin,regin(3,0),
+	tcdr(0),
+	pctl(0,307)]).
+rom(402,'get_variable02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbustoregin,regin(3,0),
+	tcdr(0),
+	pref1,
+	pctl(0,261)]).
+rom(403,'jfalse',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	mdrtomemdatbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	newp(2),
+	pctl(0,263)]).
+rom(404,'mult02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(1),
+	t1tot1bus(0),
+	ttoabus(1),
+	contobbus(13),
+	martomemdatbus,
+	memdatbustot1inbus,
+	alu(3,1,0),
+	t1inbustot,
+	alubustomdr,
+	mdrtag(1,3),
+	tcdr(1),
+	ldmdr(1),ldmdrtag(1),
+	pctl(1,277)]).
+rom(405,'mult03',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	contobbus(13),
+	alu(3,1,0),
+	rbustot,
+	alubustomar,
+	tcdr(0),
+	pctl(1,278)]).
+rom(406,'mult01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	contobbus(13),
+	alu(3,1,0),
+	rbustot,
+	alubustor,
+	tcdr(0),
+	incmar,
+	pctl(1,276)]).
+rom(407,'mult03',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	contobbus(13),
+	alu(3,1,0),
+	rbustot,
+	alubustomar,
+	tcdr(0),
+	pctl(1,278)]).
+rom(408,'put_unsafe_value06',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(2,0),
+	tcdr(0),
+	pref2,
+	pctl(0,261)]).
+rom(409,'put_unsafe_value08',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,2),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	tcdr(0),
+	inch,
+	memwrite,
+	pctl(0,216)]).
+rom(410,'successm3',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	martomemdatbus,
+	memdatbustot1inbus,
+	alu(3,0,0),
+	tbustomar,
+	t1inbustot1,
+	tcdr(0),
+	memwrite,
+	pctl(8,27)]).
+rom(411,'switch_on_structure05d',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	incmar,
+	pctl(5,284)]).
+rom(412,'switch_on_structure06',[
+	forcead(120),
+	mctl(0),
+	coderead,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,224)]).
+rom(413,'fail300',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,2),
+	regtot1inbus(1,1),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pdlc(7),
+	pctl(0,174)]).
+rom(414,'switch_on_structure12',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	incmar,
+	inct,
+	pctl(5,265)]).
+rom(415,'trail504',[
+	forcead(120),
+	mctl(12),
+	ttotbus(0),
+	t1tot1bus(0),
+	stot1inbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	tcdr(0),
+	pctl(0,287)]).
+rom(416,'deallocate04',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(1,3),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,161)]).
+rom(417,'dereference402',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	mdrtobbus(0),
+	alu(5,1,1),
+	rbustot,
+	tcdr(0),
+	pctl(0,162)]).
+rom(418,'geninterrupt',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,453)]).
+rom(419,'escrstat01',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,164)]).
+rom(420,'escrstat03',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pctl(11,7)]).
+rom(421,'ext13',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,166)]).
+rom(422,'ext22',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	decmar,
+	pctl(0,167)]).
+rom(423,'ext32',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,6),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	memwrite,
+	pctl(0,168)]).
+rom(424,'ext34',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,4),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	memwrite,
+	pctl(0,169)]).
+rom(425,'ext36',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,2),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	memwrite,
+	pctl(0,170)]).
+rom(426,'ext38',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	memwrite,
+	pctl(0,166)]).
+rom(427,'extard13',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htot1inbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	memwrite,
+	pctl(0,172)]).
+rom(428,'ext11',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	contobbus(10),
+	alu(10,1,0),
+	rbustot,
+	alubustomar,
+	tcdr(0),
+	pctl(0,165)]).
+rom(429,'extard01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,2),
+	ttoabus(0),
+	contobbus(10),
+	alu(10,1,0),
+	t1inbustot1,
+	alubustomar,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	memwrite,
+	pctl(0,171)]).
+rom(430,'fail301',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(12),
+	alu(5,1,1),
+	alubustomar,
+	tcdr(0),
+	pctl(2,267)]).
+rom(431,'bind02',[
+	ldurp,
+	forcead(127),
+	mctl(13),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tbustomar,
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(1),
+	ldmdr(1),ldmdrtag(1),
+	memwrite,
+	pctl(7,261)]).
+rom(432,'unify08',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	t1toabus(0),
+	ttobbus(0),
+	alu(0,1,1),
+	alubustor,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	inct,
+	pdlc(2),
+	pctl(0,360)]).
+rom(433,'unify_cdr04',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(1),
+	regtot1inbus(1,0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(0,0,1),
+	t1inbustot,
+	rbustot1,
+	alubustor,
+	t1bustomdr,
+	mdrtag(1,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pctl(4,50)]).
+rom(434,'unify_constant_read06',[
+	ldurp,
+	forcead(121),
+	mctl(17),
+	ttotbus(0),
+	t1tot1bus(0),
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot1,
+	tcdr(0),
+	incs,
+	pctl(0,307)]).
+rom(435,'fail300',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,2),
+	regtot1inbus(1,1),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pdlc(7),
+	pctl(0,174)]).
+rom(436,'switch_on_term00a',[
+	ldurp,
+	forcead(121),
+	mctl(14),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	alubustor,
+	tcdr(0),
+	pref2,
+	pctl(0,480)]).
+rom(437,'jeq00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,181)]).
+rom(438,'jlt00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,182)]).
+rom(439,'jle00a',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pref2,
+	pctl(0,183)]).
+rom(440,'unify_value15',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(1),
+	htot1inbus,
+	htorbus,
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustomar,
+	mdrbustoregin,regin(3,0),
+	tbustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	inch,
+	memwrite,
+	pref1,
+	pctl(8,314)]).
+rom(441,'unify_value12',[
+	ldurp,
+	forcead(121),
+	mctl(17),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot1,
+	tcdr(0),
+	incs,
+	pctl(0,307)]).
+rom(442,'ifetch',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,0),
+	regtot1inbus(1,2),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	mdrbustor,
+	tcdr(0),
+	pctl(0,6)]).
+rom(443,'unify_variable_read06',[
+	ldurp,
+	forcead(121),
+	mctl(17),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,1),
+	regtot1inbus(1,2),
+	ttoabus(0),
+	rtobbus,
+	alu(3,0,0),
+	t1inbustot1,
+	tcdr(0),
+	incs,
+	collision(tinbus),
+	pctl(4,316)]).
+rom(444,'unify_variable_read08',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	mdrbustor,
+	bbustoregin,regin(3,0),
+	tcdr(0),
+	pref1,
+	pctl(0,6)]).
+rom(445,'unify_void09',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(4),
+	alu(5,1,1),
+	tcdr(0),
+	dect,
+	pref2,
+	pctl(0,449)]).
+rom(446,'unify_void02',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	dect,
+	incs,
+	pctl(2,62)]).
+rom(447,'unify_void02',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	dect,
+	incs,
+	pctl(2,62)]).
+rom(448,'ifetch_pf2',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,0),
+	regtot1inbus(1,2),
+	stomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tinbustot,
+	t1inbustot1,
+	mdrbustor,
+	tcdr(0),
+	pref2,
+	pctl(0,6)]).
+rom(449,'unify_void10',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htorbus,
+	ttoabus(0),
+	contobbus(4),
+	alu(5,1,1),
+	rbustomar,
+	rbustomdr,
+	mdrtag(1,2),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	dect,
+	inch,
+	memwrite,
+	pctl(2,321)]).
+rom(450,'fail313',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,6),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	pctl(0,67)]).
+rom(451,'fail317',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,2),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	decmar,
+	pctl(0,196)]).
+rom(452,'fail320',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	mdrtomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	mdrbuston,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,197)]).
+rom(453,'escrstat00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(1),
+	alu(9,0,1),
+	alubustomar,
+	tcdr(0),
+	pctl(0,419)]).
+rom(454,'get_structure01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	htot1inbus,
+	arg1torbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(0,0,1),
+	tbustomar,
+	t1inbustot1,
+	rbustot,
+	alubustor,
+	tcdr(0),
+	pref1,
+	pctl(10,12)]).
+rom(455,'get_structure09',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,2),
+	mdrtomdrbus(0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(5,1,1),
+	t1inbustot1,
+	mdrbustos,
+	tcdr(0),
+	pctl(0,200)]).
+rom(456,'get_value07',[
+	ldurp,
+	forcead(121),
+	mctl(17),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttot1inbus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustot,
+	tcdr(0),
+	pctl(0,307)]).
+rom(457,'init01',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,1),
+	memdattocon(1),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,202)]).
+rom(458,'init04',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(0,4),
+	memdattocon(4),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,75)]).
+rom(459,'init08',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(1,0),
+	memdattocon(8),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,204)]).
+rom(460,'init11',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(1,3),
+	memdattocon(11),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,77)]).
+rom(461,'init15',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustoregin,regin(1,7),
+	memdattocon(15),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,129)]).
+rom(462,'jle02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(1),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	alubustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pctl(3,275)]).
+rom(463,'lock01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	stomdrbus,
+	ttoabus(0),
+	t1tobbus(0),
+	alu(10,1,0),
+	mdrbustor,
+	alubustomar,
+	tcdr(0),
+	pref1,
+	pctl(0,210)]).
+rom(464,'switch_on_constant00a',[
+	ldurp,
+	forcead(121),
+	mctl(14),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pref2,
+	pctl(0,94)]).
+rom(465,'switch_on_structure00a',[
+	ldurp,
+	forcead(121),
+	mctl(14),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pref2,
+	pctl(0,478)]).
+rom(466,'memread01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	stomdrbus,
+	ttoabus(0),
+	t1tobbus(0),
+	alu(10,1,0),
+	mdrbustor,
+	alubustomar,
+	tcdr(0),
+	pref1,
+	pctl(0,211)]).
+rom(467,'memread03',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,2),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustoregin,regin(2,0),
+	tcdr(0),
+	pctl(0,6)]).
+rom(468,'dummy',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pctl(0,6)]).
+rom(469,'proceed01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,0),
+	regtot1inbus(1,2),
+	ttoabus(0),
+	contobbus(13),
+	alu(5,1,1),
+	tinbustot,
+	t1inbustot1,
+	tcdr(0),
+	pctl(0,86)]).
+rom(470,'put_structure01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	arg1torbus,
+	mdrtomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbustoregin,regin(2,0),
+	rbustomdr,
+	mdrtag(0,0),
+	tcdr(5),
+	ldmdr(1),ldmdrtag(1),
+	inch,
+	ldmode(write),
+	memwrite,
+	pref1,
+	pctl(0,261)]).
+rom(471,'put_unsafe_value05',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(0,0,1),
+	t1inbustot1,
+	alubustor,
+	tcdr(0),
+	pctl(8,280)]).
+rom(472,'put_value06',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	regtotinbus(1,1),
+	regtot1inbus(1,2),
+	ttoabus(0),
+	rtobbus,
+	alu(3,0,0),
+	t1inbustot1,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	collision(tinbus),
+	pctl(0,89)]).
+rom(473,'put_variable06',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,1),
+	mdrtorbus(0),
+	stomdrbus,
+	ttoabus(0),
+	rtobbus,
+	alu(3,0,0),
+	rbustoregin,regin(2,0),
+	mdrbustor,
+	tcdr(0),
+	collision(t1inbus),
+	pctl(0,6)]).
+rom(474,'reset02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	contobbus(5),
+	alu(9,0,1),
+	rbustot1,
+	rbustot,
+	rbustoregin,regin(1,2),
+	alubustor,
+	tcdr(0),
+	pdlc(7),
+	ldmode(read),
+	ldcutm(0),
+	pctl(0,219)]).
+rom(475,'reset04',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	contobbus(9),
+	alu(3,0,0),
+	rbustomar,
+	rbustoh,
+	bbustoregin,regin(1,1),
+	tcdr(0),
+	pref1,
+	pctl(0,6)]).
+rom(476,'successm1',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,349)]).
+rom(477,'successtr1',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	pctl(0,221)]).
+rom(478,'switch_on_structure01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(1),
+	t1tot1bus(0),
+	ttoabus(1),
+	ttobbus(1),
+	alu(3,0,0),
+	tbustomar,
+	tcdr(0),
+	pctl(0,95)]).
+rom(479,'switch_on_structure05b',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	mdrtomemdatbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	newp(1),
+	pctl(0,263)]).
+rom(480,'switch_on_term01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	mdrbustoregin,regin(0,0),
+	tcdr(0),
+	pctl(11,8)]).
+rom(481,'trail502',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	t1toabus(0),
+	rtobbus,
+	alu(5,1,1),
+	tbustomar,
+	tcdr(0),
+	dect,
+	pctl(1,287)]).
+rom(482,'try07',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,2),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,227)]).
+rom(483,'try10',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,5),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,228)]).
+rom(484,'try13',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,229)]).
+rom(485,'try16',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,1),
+	ttoabus(0),
+	rtobbus,
+	alu(3,0,0),
+	t1inbustot1,
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	collision(t1inbus),
+	pctl(0,230)]).
+rom(486,'try05',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,0),
+	mdrtorbus(0),
+	t1toabus(0),
+	contobbus(11),
+	alu(10,1,0),
+	t1inbustot1,
+	rbustoregin,regin(1,4),
+	alubustor,
+	tbustomdr,
+	mdrtag(0,0),
+	tcdr(1),
+	ldmdr(1),ldmdrtag(1),
+	incmar,
+	memwrite,
+	pctl(0,354)]).
+rom(487,'unify07',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttot1inbus(0),
+	mdrtomdrbus(0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	mdrbustor,
+	bbustot,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(15,15)]).
+rom(488,'unify10',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(0,0,1),
+	rbustomar,
+	alubustor,
+	tcdr(0),
+	pctl(0,233)]).
+rom(489,'unify14',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttot1inbus(0),
+	rtorbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot1,
+	rbustot,
+	tcdr(0),
+	pctl(0,177)]).
+rom(490,'unify_cdr10',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(0,0,1),
+	t1bustomar,
+	alubustor,
+	t1bustomdr,
+	mdrtag(1,2),
+	tcdr(3),
+	ldmdr(1),ldmdrtag(1),
+	inch,
+	memwrite,
+	pctl(0,235)]).
+rom(491,'unify_constant_read02',[
+	ldurp,
+	forcead(120),
+	mctl(7),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	pctl(5,306)]).
+rom(492,'unify_ovf01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(1),
+	t1tot1bus(1),
+	regtot1inbus(1,2),
+	rtorbus,
+	ttoabus(1),
+	t1tobbus(1),
+	alu(10,1,0),
+	t1inbustot,
+	rbustot1,
+	alubustor,
+	tcdr(0),
+	pctl(0,109)]).
+rom(493,'unify_ovf07',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	pdlread,
+	pdlread,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tbustomar,
+	mdrbustomdr,
+	mdrtag(0,0),
+	tcdr(0),
+	ldmdr(1),ldmdrtag(1),
+	inct,
+	memwrite,
+	pctl(0,110)]).
+rom(494,'unify_unf01',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(15,1,0),
+	alubustomar,
+	tcdr(0),
+	dect,
+	pctl(0,111)]).
+rom(495,'unify_value02',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(10,1,0),
+	alubustomar,
+	tcdr(0),
+	pctl(0,240)]).
+rom(496,'unify_value07',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(0,0,1),
+	alubustor,
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,113)]).
+rom(497,'unify_value20',[
+	ldurp,
+	forcead(127),
+	mctl(13),
+	ttotbus(1),
+	t1tot1bus(0),
+	ttoabus(1),
+	ttobbus(1),
+	alu(3,0,0),
+	tbustomar,
+	tcdr(0),
+	memwrite,
+	pctl(0,261)]).
+rom(498,'unify_variable_read02',[
+	ldurp,
+	forcead(120),
+	mctl(7),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(10,1,0),
+	rbustot,
+	alubustor,
+	tcdr(0),
+	pctl(5,315)]).
+rom(499,'unify_void08',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,5),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	tcdr(0),
+	pctl(0,445)]).
+rom(500,'x7_to_b_01',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	t1tobbus(0),
+	alu(3,0,0),
+	bbustoregin,regin(1,2),
+	tcdr(0),
+	pref2,
+	pctl(0,6)]).
+rom(501,'x7_to_tr_01',[
+	forcead(120),
+	mctl(1),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(1,0),
+	ttomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1inbustot,
+	mdrbustoregin,regin(1,1),
+	tcdr(0),
+	pref2,
+	pctl(0,6)]).
+rom(502,'TRbasetot',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	contobbus(9),
+	alu(3,0,0),
+	bbustot,
+	tcdr(0),
+	pctl(0,112)]).
+rom(503,'martomdr',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	martomemdatbus,
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,6)]).
+rom(504,'mdrtomar',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustomar,
+	tcdr(0),
+	pctl(0,6)]).
+rom(505,'mdrtor',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtomdrbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbustor,
+	tcdr(0),
+	pctl(0,6)]).
+rom(506,'mdrtot',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	mdrtorbus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	rbustot,
+	tcdr(0),
+	pctl(0,6)]).
+rom(507,'memreadd',[
+	forcead(120),
+	mctl(0),
+	memread,
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,6)]).
+rom(508,'ntomdr',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ntomdrbus,
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	mdrbustomdr,
+	mdrtag(0,0),
+	tcdr(0),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,6)]).
+rom(509,'reg4tomemdat',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	regtot1inbus(0,4),
+	ttoabus(0),
+	ttobbus(0),
+	t1inbustomemdatbus,
+	alu(3,0,0),
+	memdatbustomdr,
+	mdrtag(0,0),
+	tcdr(6),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,6)]).
+rom(510,'t1tomdr',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	t1bustomdr,
+	mdrtag(0,0),
+	tcdr(2),
+	ldmdr(1),ldmdrtag(1),
+	pctl(0,6)]).
+rom(511,'writepdl00',[
+	forcead(120),
+	mctl(0),
+	ttotbus(0),
+	t1tot1bus(0),
+	ttoabus(0),
+	ttobbus(0),
+	alu(3,0,0),
+	tcdr(0),
+	pdlc(2),
+	pctl(0,372)]).

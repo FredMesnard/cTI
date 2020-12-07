@@ -1,0 +1,31 @@
+This directory contains programs from appendix C of Poole, Mackworth
+and Goebel, "Computational Intelligence:  A Logical Approach", Oxford
+University Press, 1996. All of these programs are copyright Oxford
+University Press and Poole, Mackworth and Goebel, 1996.
+
+All of these programs have a similar form
+    foo.pl     the main code
+    foo_t.pl   test code (sometimes foo_t1.pl, foo_t2.pl, etc)
+    foo.tr     tracing of the program on the test data (not Prolog readable)
+
+All of these assume that you have preloaded
+    standard.pl   this defines standard procedures we assume.
+
+The code has been tested on: Sicstus Prolog, Quintus Prolog and SWI
+Prolog.  Please contact the authors if it works (or doesn't) for
+another standard Prolog.
+
+The following programs are present:
+   ask         ask-the-user interpreter
+   bnet        bayes net interpreter
+   csp         constraint satisfaction program using arc consistency
+   fwd         forward chaining definite clause intepreter
+   fwdab       forward chaining abductive definite clause intepreter (ATMS)
+   fwdnf       forward chaining intepreter with negation as failure (JTMS)
+   how         meta interpreter to traverse proof trees - how goal is proved
+   iprove      iterative deepening definite clause interpreter
+   nnlearn     neural-network style learning for parametrized logic programs
+   pop         partial-order planner, using strips representation
+   prall       meta-interpreter that allows control over search strategy
+   sim         robot simulator
+

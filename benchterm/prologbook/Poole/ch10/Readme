@@ -1,0 +1,7 @@
+This directory contains some more Bayesian network interpreters
+
+The following are of interest:
+
+bnet2p + relevant   Bayes net interpreter that prunes irrelevant variables
+                    before summing out variables. Can be much faster.
+

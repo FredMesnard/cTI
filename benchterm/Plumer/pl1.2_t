@@ -1,0 +1,7 @@
+append(parts([],Y),is(sum(Y))).
+append(parts([H|X],Y),is(sum([H|Z]))) :- append(parts(X,Y),is(sum(Z))).
+
+perm([],[]).
+perm(L,[H|T]) :- append(parts(V,[H|U]),is(sum(L))),
+                 append(parts(V,U),is(sum(W))),
+                 perm(W,T).

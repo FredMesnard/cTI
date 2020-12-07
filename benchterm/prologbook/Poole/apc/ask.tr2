@@ -1,0 +1,11 @@
+| ?- aprove(lit(L)).
+Is up(s2) true? [yes, no, unknown]
+|: yes.
+Is up(s1) true? [yes, no, unknown]
+|: no.
+Is down(s2) true? [yes, no, unknown]
+|: no.
+Is up(s3) true? [yes, no, unknown]
+|: yes.
+L = l2 ? 
+yes

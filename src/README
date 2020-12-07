@@ -1,0 +1,153 @@
+
+
+	cTI: a constraint-based Termination Inference tool for ISO-Prolog
+
+
+Introduction:
+-------------
+
+cti is an automatic tool for infering universal left termination conditions 
+of any ISO-Prolog programs. In other words, given a program, 
+cti tries to compute all the modes for all user-defined predicates 
+which insures that the Prolog processor will give all answers in finite time.
+As in the ISO-Prolog standard, cti assumes that no infinite rational term
+is created at run-time while running the analyzed program. 
+
+
+Requirements:
+-------------
+
+A recent version SICStus Prolog (SP) is needed and
+the user should install the Parma Polyhedra Library (PPL).
+SP 3.9.1 or newer is required. An evaluation version of SP 
+is available from the SICS web site for most platforms:
+http://www.sics.se/isl/sicstuswww/site/eval.html 
+PPL is free software under the GNU General Public 
+License available from:
+http://www.cs.unipr.it/ppl/
+
+
+Installing and runnning cti with SICStus Prolog:
+------------------------------------------------
+
+Inside the src/ directory, compile the sources:
+       	sicstus -l main
+Then any Prolog source can be analyzed using the predicate
+file_termconds/2, eg:
+	file_termconds('Filex/append.pl',L).
+The first argument is a relative or absolute path to a Prolog file.
+After proving this goal, L is bound to a list of terms of the form:
+	predicate_term_condition(Head,TerminationCondition)
+In our case, we get:
+	L=[predicate_term_condition(app(A,B,C),C+A)]
+It means that any query app(Xs,Ys,Zs) is proven left terminating
+if Xs is bound to a ground term or Zs is bound to a ground term.
+Other queries related to app/3, eg app(Xs,Ys,Zs) where
+Ys is ground, may or may not terminate. Some informations about 
+timings are also given, see the associated technical report. 
+
+The behavior of cti is described by the predicate:
+	current_cti_flag(?Option,?Default)
+When the user first compiles the system, the best available polyhedra
+library (PPL > clp(Q)) is automatically chosen. The default are:
+
+current_cti_flag(polylib,LIB) 
+	with LIB=poly_ppl or LIB=poly_clpq;
+
+current_cti_flag(cti_version,Atom)
+	where Atom denotes the cti version;
+
+current_cti_flag(process_include_ensure_loaded,off)
+	which prevents cti from analyzing files refered by an include/1
+	or ensure_loaded/1 from being analyzed;
+
+current_cti_flag(time_out,10000)
+	so there is a default timeout of 10 seconds for each costly operations;
+
+current_cti_flag(nb_ite_clpn,3)
+	means that if needed, there is 3 iterations before applying widening
+	while computing a numerical model.
+
+current_cti_flag(compare_ppl_clpq,off)
+	for comparing poly_ppl and poly_clpq;
+
+current_cti_flag(known_predicate,?PI)
+	to check or list the known built-ins defined by its predicate indicator P/N.
+
+These options can be modified with the predicate:
+	
+set_cti_flag(+Option,+Value)
+
+Here are the valid values wrt the options:
+	Option:				Values:
+	-------				-------
+	poly_lib			poly_ppl or poly_clpq	
+	process_include_ensure_loaded	on or off
+	time_out                  	any integer >= 10 (in msec)
+	nb_ite_clpn      		any integer >= 1
+	compare_ppl_clpq		on or off
+
+Unknown predicates are assumed to finitely failed, which is the 
+standard behavior of any ISO-Prolog conforming system.
+It is possible to get compatibility with most Prolog dialects
+by adding at the beginning of the file:
+	:- include_predef('predef_for_compatibility.pl').  
+By modifying the file predef_for_compatibility.pl,
+the user may define its own set of built-ins.
+The analyzer will take these informations as granted,
+and will be skipped all the rules, if any, defining 
+these predicates. 
+
+
+Creating a program state :
+--------------------------
+
+It is also possible to create an executable named cti
+with the command:
+       make
+Then one uses the analyzer as follows:
+       cti Filex/append.pl
+The output is a Prolog list of termination conditions
+followed by a full stop.
+Type:
+       ./cti -h
+to get the commande usage, where most options previously
+descrided are available.
+
+
+Bug reports:
+------------
+Please report any bug you find to fred@univ-reunion.fr,
+together with the smallest faulty extract of the analyzed file.
+
+
+Acknowledgements:
+-----------------
+
+Fred Mesnard designed, implemented and maintains the analyzer, which
+was publicly announced on comp.lang.prolog the 22th of April 2000. 
+Serge Colin wrote the mu-calculator, inspired by the Toupie interpreter
+from Antoine Rauzy. Ulrich Neumerkel helped while debugging the system.
+Roberto Bagnara wrote the interface between cti and the PPL.
+
+
+---------------------------------------------------------------------
+Copyright (C) 2000--2006 Fred Mesnard -- fred@univ-reunion.fr
+
+The cti analyzer is free software; you can redistribute it
+and/or modify it under the terms of the GNU General Public License as
+published by the Free Software Foundation; either version 2 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the:
+	Free Software Foundation, Inc.	
+	59 Temple Place, Suite 330
+	Boston, MA 02111-1307
+	USA
+---------------------------------------------------------------------

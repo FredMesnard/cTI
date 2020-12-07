@@ -1,0 +1,34 @@
+prolog
+booting SICStus...please wait
+SICStus 2.1 #2 : Sun Sep 20 16:28:56 PDT 1992
+| ?- [standard].
+{consulting /MyDisk/book/code/apc/standard.pl...}
+{/MyDisk/book/code/apc/standard.pl consulted, 203 msec 4790 bytes}
+
+yes
+| ?- [ask].
+{consulting /MyDisk/book/code/apc/ask.pl...}
+{/MyDisk/book/code/apc/ask.pl consulted, 93 msec 2494 bytes}
+
+yes
+| ?- [ask_t].
+{consulting /MyDisk/book/code/apc/ask_t.pl...}
+{/MyDisk/book/code/apc/ask_t.pl consulted, 141 msec 4836 bytes}
+
+yes
+| ?- aprove(lit(L)).
+Is up(s2) true? [yes, no, unknown]
+|: yes.
+Is up(s1) true? [yes, no, unknown]
+|: yes.
+
+L = l1 ? ;
+Is down(s2) true? [yes, no, unknown]
+|: no.
+Is up(s3) true? [yes, no, unknown]
+|: yes.
+
+L = l2 ? ;
+
+no
+| ?- 

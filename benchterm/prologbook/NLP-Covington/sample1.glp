@@ -1,0 +1,33 @@
+% File SAMPLE1.GLP
+% Michael A. Covington
+% Natural Language Processing for Prolog Programmers
+% (Prentice-Hall)
+% Chapter 5, Section 5.4.4-5.4.5
+
+
+% Sample program to be processed by Mini-GULP:
+% DCG rules for a simple demonstration of
+% person and number agreement in the verb.
+
+% To test:
+%  ?- reconsult('minigulp.pl').
+%  ?- g_consult('gulpgram.pl').
+%  ?- s(Features,[she,laughs],[]), g_write(Features).
+
+g_schema(person:X,[X,_]).
+g_schema(number:X,[_,X]).
+
+s --> np(person:P..number:N), vp(person:P..number:N).
+
+np(Features) --> pronoun(Features).
+
+pronoun(person:1..number:singular) --> [i].
+pronoun(person:1..number:plural)   --> [we].
+pronoun(person:3..number:singular) --> [she].
+pronoun(person:3..number:plural)   --> [they].
+
+vp(Features) --> v(Features).
+
+v(person:3..number:singular) --> [laughs].
+v(person:1) -->                  [laugh].
+v(number:plural) -->             [laugh].

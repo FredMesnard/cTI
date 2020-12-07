@@ -1,0 +1,104 @@
+% Continuous maze with memory 
+% ENVORONMENT MODULE
+%
+% Persistent values are left closed
+
+% INPUT:
+% steer(D,T) means steer Dwards at time T. D in {left,right,straight}.
+
+sense steer(_,_).
+
+% OUTPUT:
+% compass(D,T) the robot is pointing in direction D at time T
+% frontsensor(on,T) the front sensor of the robot is on at time T
+% rightsensor(on,T) the right sensor of the robot is on at time T
+
+backward frontsensor(_,_).
+backward rightsensor(_,_).
+remember robotpos(_,_,T)/T.
+remember compass(_,T)/T.
+initially compass(0,0).
+
+% The following declaration declares what it is that we view during the
+% simulation.
+view(robotpos(X,Y,T),['X=',X,' Y=',Y,' at T=',T]).
+view(set_desired_direction(D,T),['Event: ',set_desired_direction(D,T)]).
+%===================================================================
+
+backward compass_deriv(_,_,_).
+initially robotpos(0,10,0).
+
+backward x_deriv(_,_,_).
+backward y_deriv(_,_,_).
+backward seeblock(X,Y,D).
+backward inblock(X,Y).
+backward inf(_).
+
+frontsensor(on,T) <-
+    compass(D,T) &
+    robotpos(X,Y,T) &
+    seeblock(X,Y,D).
+
+rightsensor(on,T) <-
+    compass(D,T) &
+    robotpos(X,Y,T) &
+    seeblock(X,Y,D-80).
+
+% compass((C+DC+360) mod 360,T+DT) <-
+compass(C1,T1) <-
+   inf(DT) &
+   C1 = (C+DC+360) mod 360 &
+   T1 = T+DT &
+   compass(C,T) &
+   compass_deriv(DC,DT,T).
+
+% if robot is steering left, DC/DT=10 (i.e., 10 degrees per second).
+compass_deriv(DC,DT,T) <-
+   steer(left,T) &
+   DC/DT = 10.
+
+% if robot is steering left, DC/DT=0 
+compass_deriv(0,_,T) <-
+   steer(straight,T).
+
+% if robot is steering right, DC/DT=-10 (i.e., -10 degrees per second).
+compass_deriv(DC,DT,T) <-
+   steer(right,T) &
+   DC/DT = -10.
+
+%robotpos(X+DX,Y+DY,T+DT) <-
+robotpos(X1,Y1,T1) <-
+   inf(DT) &
+   X1 = X+DX &
+   Y1 = Y+DY &
+   T1 = T+DT &
+   robotpos(X,Y,T) &
+   x_deriv(DX,DT,T) &
+   y_deriv(DY,DT,T).
+
+x_deriv(DX,DT,T) <-
+   compass(D,T) &
+   DX/DT=cos(D*3.14159265358979344/180).
+
+y_deriv(DY,DT,T) <-
+   compass(D,T) &
+   DY/DT=sin(D*3.14159265358979344/180).
+
+inf(1) <- true.
+
+seeblock(X,Y,D) <-
+   inblock(X+12*cos(D*3.14159265358979344/180),
+           Y+12*sin(D*3.14159265358979344/180)).
+
+inblock(X,Y) <-
+   X >= 60 & X =< 70 &
+   Y >= 0 & Y =< 70.
+inblock(X,Y) <-
+   X >= 10 & X =< 60 &
+   Y >= 60 & Y =< 70.
+inblock(X,Y) <-
+   X >= 10 & X =< 20 &
+   Y >= 40 & Y =< 60 .
+inblock(X,Y) <-
+   X >= 10 & X =< 40 &
+   Y >= 20 & Y =< 40 .

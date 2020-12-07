@@ -1,0 +1,31 @@
+This directory contains programs from Chapter 11 of Poole, Mackworth
+and Goebel, "Computational Intelligence:  A Logical Approach", Oxford
+University Press, 1996. All of these programs are copyright Oxford
+University Press and Poole, Mackworth and Goebel, 1996.
+
+All of these programs have a similar form
+    foo.pl     the main code
+    foo_t.pl   test code (sometimes foo_t1.pl, foo_t2.pl, etc)
+    foo.tr     tracing of the program on the test data (not Prolog readable)
+
+The following code is present:
+
+Decision Trees Search:
+    dtlearn1.pl   binary attributes, myopic max information split, no noise
+    dtlearn2.pl   binary attributes, myopic max info split, noise allowed
+    dtlearn3.pl   binary attributes, full seach for smallest tree, no noise
+    dtlearn4.pl   binary attributes, GINI index, no noise
+
+    dtlearn_t1.pl classification data from Figure 11.2
+    dtlearn_t2.pl classification data from Figure 11.2, with Boolean attributes
+    dtlearn_t3.pl small Boolean example
+
+Neural Network Learning
+    nnlearn.pl    backpropagation learner
+    nnlearn2.pl   same as nnlearn.pl, but it prints out a trace
+
+    nnl_t1.pl     classification data from Figure 11.2 (two hidden units)
+    nnl_t2.pl     classification data from Figure 11.2 (no hidden units)
+    nnl_t2.pl     small Boolean example (same data as dtlearn_t3.pl)
+
+

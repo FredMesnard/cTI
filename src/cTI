@@ -1,0 +1,67 @@
+#!/usr/bin/env swipl
+
+:- initialization(main, main).
+
+:- use_module(library(readutil)).
+:- use_module(library(clpb)).
+
+:- use_module(main).
+:- use_module(utils).
+
+main(Argv) :-
+        Argv = [FileName|_],
+        file_queryOfInterest(FileName,Query), 
+        (Query == none -> set_cti_flag(print_info,yes) ; set_cti_flag(print_info,no)),
+        file_termconds(FileName,TermConds),
+        main_(Query,TermConds).
+        
+main_(none,TermConds) :-
+        !,
+        write_list(TermConds).
+main_(Query,TermConds) :-
+        %writeln(Query),
+        %write_list(TermConds),
+        query_(Query,TermConds).
+
+
+query_(Query,TermConds) :-
+    Query=..[P|IOArgs], 
+    length(IOArgs,N),
+    length(VarsArgs,N),
+    Atom=..[P|VarsArgs],    
+    once(member(predicate_term_condition(Atom,TC),TermConds)),
+    product(IOArgs,VarsArgs,Product),
+    Formula = (Product =< TC),
+    %write_list([Formula]),
+    (taut(Formula,T)
+    ->
+        (T==1 -> writeln('YES') ; writeln('MAYBE'))
+    ;
+        writeln('MAYBE')).
+
+    product([],[],1).
+    product([IO|IOArgs],[X|Xs],Piox*P) :-
+        prod(IO,X,Piox),
+        product(IOArgs,Xs,P).
+    
+        prod(i,X,X). prod(o,_X,1).
+        prod(b,X,X). prod(f,_X,1).
+        prod(g,X,X). prod(a,_X,1).
+
+
+
+file_queryOfInterest(FileName,Query) :- 
+	open(FileName,read,Stream),
+    read_line_to_string(Stream,String),
+	process(String,Stream,Query),
+	close(Stream).
+
+    process(end_of_file,_Stream,none) :- 
+        !.
+    process(String,_Stream,Query) :-
+        string_concat("%query: ", PredString, String), 
+        !,
+        term_string(Query,PredString).
+    process(_String,Stream,Query) :-
+        read_line_to_string(Stream,NextString),
+        process(NextString,Stream,Query).

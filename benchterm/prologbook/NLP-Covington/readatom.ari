@@ -1,0 +1,122 @@
+% File READATOM.ARI
+% Michael A. Covington
+% Natural Language Processing for Prolog Programmers
+% (Prentice-Hall)
+% Appendix B
+
+% Special version of read_atomics/1 for Arity Prolog only.
+
+
+% read_atomics(-Atomics)
+%  Reads a line of text, breaking it into a
+%  list of atomic terms: [this,is,an,example].
+
+read_atomics(Atomics) :-
+   read_line(0,Text),       % ARITY PROLOG 5 AND 6
+%  read_string(255,Text),   % ARITY PROLOG 4 ONLY
+   list_text(String,Text),
+   string_atomics(String,Atomics).
+
+
+% string_atomics(+String,-Atomics)
+%  Breaks String up into atomic terms
+%  e.g., " abc def  123 " into [abc,def,123].
+
+string_atomics([C|Chars],ListOfAtomics) :-    % skip initial blanks
+   char_type(C,blank,_),
+   !,
+   string_atomics(Chars,ListOfAtomics).
+
+string_atomics([C|Chars],[A|Atomics]) :-      % tokenize 1 word
+   extract_word([C|Chars],Rest,Word),
+   name_num(A,Word),
+   string_atomics(Rest,Atomics).
+
+string_atomics([],[]).                        % end of list
+
+
+% extract_word(+String,-Rest,-Word)
+%  Extracts the first Word from String; Rest is rest of String.
+%  Assumes String does not begin with blank.
+
+extract_word([C|Chars],Rest,[NewC|RestOfWord]) :-
+   char_type(C,Type,NewC),
+   extract_word_aux(Type,Chars,Rest,RestOfWord).
+
+extract_word_aux(special,Rest,Rest,[]) :- !.
+   % If Char is special, don't read any more characters.
+
+extract_word_aux(Type,[C|Chars],Rest,[NewC|RestOfWord]) :-
+   char_type(C,Type,NewC),
+   !,
+   extract_word_aux(Type,Chars,Rest,RestOfWord).
+
+extract_word_aux(_,Rest,Rest,[]).
+   % if previous clause did not succeed.
+
+
+% char_type(+Code,?Type,-NewCode)
+%  Given an ASCII code, classifies the character as
+%  'end' (of line/file), 'blank', 'alpha'(numeric), or 'special',
+%  and changes it to a potentially different character (NewCode).
+
+char_type(10,end,10) :- !.         % UNIX end of line mark
+char_type(13,end,13) :- !.         % DOS end of line mark
+char_type(-1,end,-1) :- !.         % get0 end of file code
+
+char_type(Code,blank,32) :-        % blanks, other ctrl codes
+  Code =< 32,
+  !.
+
+char_type(Code,alpha,Code) :-      % digits
+  48 =< Code, Code =< 57,
+  !.
+
+char_type(Code,alpha,Code) :-      % lower-case letters
+
+  97 =< Code, Code =< 122,
+  !.
+
+char_type(Code,alpha,NewCode) :-   % upper-case letters
+  65 =< Code, Code =< 90,
+  !,
+  NewCode is Code + 32.            %  (translate to lower case)
+
+char_type(Code,special,Code).      % all others
+
+
+% name_num(-AtomOrNumber,+String)
+%  Used in place of name/2 in last clause of complete_atomics
+%  in versions of Prolog where name/2 does not recognize numbers.
+
+name_num(Number,String) :-
+  nonvar(String),
+  string_number(String,Number),
+  !.
+
+name_num(Atom,String) :-
+  name(Atom,String).
+
+
+% string_number(+S,-N)
+%  Converts string to corresponding number, e.g. "234" to 234.
+%  Fails if S does not represent a nonnegative integer.
+
+string_number(S,N) :-
+   string_number_aux(S,0,N).
+
+string_number_aux([D|Digits],Total,Result) :-
+   digit_value(D,V),
+   NewTotal is 10*Total + V,
+   string_number_aux(Digits,NewTotal,Result).
+
+string_number_aux([],Result,Result).
+
+
+% digit_value(+Code,-Value)
+%  Maps ASCII code for a digit ("0"..."9") onto value (0...9).
+
+digit_value(Code,Value) :-
+   48 =< Code, Code =< 57,
+   Value is Code - 48.
+

@@ -1,0 +1,88 @@
+% Continuous maze with memory 
+% ROBOT MODULE
+%
+% Persistent values are left closed
+
+
+% INPUT:
+% compass(D,T) the robot is pointing in direction D at time T
+% frontsensor(on,T) the front sensor of the robot is on at time T
+% rightsensor(on,T) the right sensor of the robot is on at time T
+sense compass(_,_).
+sense frontsensor(_,_).
+sense rightsensor(_,_).
+
+% OUTPUT:
+% steer(D,T) means steer Dwards at time T. D in {left,right,straight}.
+backward steer(_,_).
+
+%===================================================================
+remember set_desired_direction(_,T)/T.
+initially set_desired_direction(0,0).
+
+backward goal_direction(_,_).
+backward same(_,_).
+backward desired_direction_was(_,_).
+backward desired_direction_reset(_,_).
+
+
+% OUTPUT:
+% steer(D,T) means steer Dwards at time T. D in {left,right,straight}.
+%    Here is a bang-bang controller to steer towards the right direction
+
+steer(left,T) <-
+   goal_direction(G,T) &
+   compass(C,T) &
+   ((G-C + 180) mod 360 - 180) > 0.
+steer(straight,T) <-
+   goal_direction(G,T) &
+   compass(C,T) &
+   ((G-C + 180) mod 360 - 180) = 0.
+steer(right,T) <-
+   goal_direction(G,T) &
+   compass(C,T) &
+   ((G-C + 180) mod 360 - 180) < 0.
+
+% goal_direction(D,T) means that the robot wants to go in direction D at
+% time T. 
+% Directions: 0 is east, 90=north, 180=west, 270=south, 360=east, etc.
+% N.B. Desired directions can excede 360. compass directions cannot.
+% The following axioms are essentially the event calculus formulae
+% of Kowalski and Sergot.
+goal_direction(D,T) <-
+   T1 =< T &
+   set_desired_direction(D,T1) &
+   ~ desired_direction_reset(T1,T).
+desired_direction_reset(T1,T) <-
+   T1< T2 &
+   T2 =< T &
+   set_desired_direction(D,T2).
+
+% set_desired_direction(D,T) is the "event" of changing desired direction
+% occurred at time T. Note that here events are derived from continuous
+% quantities. [this means that we need to have a different evaluation 
+% mechanism to Prolog's].
+
+set_desired_direction(D1,T) <-
+   compass(C,T) &
+   desired_direction_was(D,T) &
+   same(C,D) &
+   frontsensor(on,T) &
+   D1 is D+90.
+set_desired_direction(D1,T) <-
+   compass(C,T) &
+   desired_direction_was(D,T) &
+   same(C,D) &
+   D ~= 0 &
+   ~ frontsensor(on,T) &
+   ~ rightsensor(on,T) &
+   D1 is D-90.
+
+% same(D1,D2) true if directions D1 and D2 are the same up to some tolerance.
+same(A1,A2) <-
+   abs(A1-A2) mod 360 =< 11.
+
+desired_direction_was(D,T) <-
+   T1 < T &
+   set_desired_direction(D,T1) &
+   ~ desired_direction_reset(T1,T).

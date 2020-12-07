@@ -1,0 +1,10 @@
+This directory contains programs from Chapter 11 of Poole, Mackworth
+and Goebel, "Computational Intelligence:  A Logical Approach", Oxford
+University Press, 1996. All of these programs are copyright Oxford
+University Press and Poole, Mackworth and Goebel, 1996.
+
+This directory contains simulator stuff.
+
+You should probably only look at the sim.pl and sim_t.pl in apc.
+
+sim2.pl is like the simulator sim.pl, but takes advantage of delaying

@@ -1,0 +1,65 @@
+% ***************************************************************
+% The following defines the graph of Section 4.2.3 in the book
+
+% neighbours(N,NN) is true if NN is the list of neighbours of node N
+neighbours(s,[a,f,k]).
+neighbours(a,[b,c]).
+neighbours(b,[]).
+neighbours(c,[d,e]).
+neighbours(d,[]).
+neighbours(e,[]).
+neighbours(f,[h,i]).
+neighbours(h,[]).
+neighbours(i,[j]).
+neighbours(j,[]).
+neighbours(k,[l,n]).
+neighbours(l,[m]).
+neighbours(n,[o]).
+neighbours(m,[o]).
+neighbours(o,[p]).
+neighbours(p,[q]).
+neighbours(q,[g]).
+neighbours(g,[]).
+
+% is_goal(N) is true if N is a goal node.
+is_goal(g).
+
+% cost(N,M,C) is true if C is the arc cost for the arc from node N to node M
+cost(s,a,2).
+cost(s,f,4).
+cost(s,k,4).
+cost(a,b,3).
+cost(a,c,2).
+cost(c,d,2).
+cost(c,e,5).
+cost(f,h,2).
+cost(f,i,1).
+cost(i,j,3).
+cost(k,l,3).
+cost(k,n,3).
+cost(l,m,4).
+cost(n,o,2).
+cost(m,o,2).
+cost(o,p,4).
+cost(p,q,7).
+cost(q,g,2).
+
+% h(N,V) is true if V is the heuristic cost of node N
+h(a,10).
+h(b,9).
+h(c,12).
+h(d,10).
+h(e,15).
+h(f,16).
+h(g,0).
+h(h,16).
+h(i,17).
+h(j,19).
+h(k,12).
+h(l,9).
+h(m,7).
+h(n,11).
+h(o,9).
+h(p,9).
+h(q,2).
+h(s,12).

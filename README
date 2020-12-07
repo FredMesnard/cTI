@@ -1,0 +1,67 @@
+
+
+	cTI: a constraint-based Termination Inference tool for ISO-Prolog
+
+
+Introduction:
+-------------
+
+cTI is an automatic tool for inferring universal left termination conditions
+of any ISO-Prolog programs. In other words, given a program,
+cTI tries to compute all the modes for all user-defined predicates
+which insures that the Prolog processor will give all answers in finite time.
+cTI assumes that no infinite rational term is created at run-time 
+while running the analyzed program.
+
+
+Requirements:
+-------------
+
+SWI-Prolog >= 8
+
+
+Installing and running cTI:
+---------------------------
+
+Inside the src/ directory, any Prolog source can be analyzed 
+from the terminal, e.g.:
+
+	% ./cTI Filex/testapp3.pl    
+	...
+	predicate_term_condition(rev(A,B),A).
+	predicate_term_condition(app(A,B,C),C+A).
+	predicate_term_condition(app3(A,B,C,D),A*D+A*B).
+	predicate_term_condition(app3bis(A,B,C,D),D).
+
+which means that, wrt the Prolog program Filex/testapp3.pl:
+- rev/2 terminates if its first argument is ground,
+- app/3 terminates if its first or third argument is ground,
+- app3/4 terminates if either its first and fourth arguments are ground
+or its first and second argument are ground,
+- app3bis terminates if its fourth argument is ground.
+
+
+Options:
+--------
+
+Unknown predicates are assumed to finitely failed, which is the
+standard behavior of any ISO-Prolog conforming system.
+It is possible to get compatibility with most Prolog dialects
+by adding at the beginning of the file:
+	:- include_predef('predef_for_compatibility.pl').
+By modifying the file predef_for_compatibility.pl,
+the user may define its own set of built-ins.
+
+
+Acknowledgements:
+-----------------
+
+Fred Mesnard designed, implemented and maintains the analyzer, which
+was publicly announced on comp.lang.prolog the 22th of April 2000.
+Ulrich Neumerkel helped while debugging the system.
+Roberto Bagnara wrote the interface between cTI and the PPL.
+
+
+--------------------------------------------------------------------
+Copyright (C) 2000+ Fred Mesnard -- frederic.mesnard@univ-reunion.fr
+---------------------------------------------------------------------

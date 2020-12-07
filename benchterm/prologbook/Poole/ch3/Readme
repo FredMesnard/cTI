@@ -1,0 +1,23 @@
+This directory contains code from Chapter 3 of Poole, Mackworth and
+Goebel, Computational Intelligence. All code is copyright by Poole,
+Mackworth and Goebel, and Oxford University Press, 1996. All Rights
+reserved.
+
+The following code all runs in standard Prolog:
+
+elect.pl       electrical wiring example from Section 3.2
+course.pl      course example from Section 3.3.1
+lists.pl       list procedures from Section 3.4
+univ.pl        university requirements example of Section 3.5
+univ2.pl       university requirements example, different axiomatization
+nl_cfg.pl      natural language parser using context free grammar from Fig 3.5
+trans.pl       grammer for outputting canned English from Figure 3.7
+trans2.pl      DCG version of trans.pl
+nl_numbera.pl  natural language parser with number agreement of Figure 3.8
+nl_interface.pl natural language interface of Figure 3.9
+
+The following code is not described in the text, but are exercises:
+
+bin_arith.pl   binary arithmetic from Exercise 3-9
+exp_parser.pl  left associtative parser for arithmetic expressions
+sorting.pl     sorting algorithms (mergesort and quicksort)
