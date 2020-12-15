@@ -2,4 +2,4 @@
 
 # Ignore files called:
 .DS_Store
-
+src/.DS_Store
