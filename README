@@ -44,7 +44,7 @@ or its first and second argument are ground,
 Options:
 --------
 
-Unknown predicates are assumed to finitely failed, which is the
+- Unknown predicates are assumed to finitely failed, which is the
 standard behavior of any ISO-Prolog conforming system.
 It is possible to get compatibility with most Prolog dialects
 by adding at the beginning of the file:
@@ -52,16 +52,33 @@ by adding at the beginning of the file:
 By modifying the file predef_for_compatibility.pl,
 the user may define its own set of built-ins.
 
+- cTI includes a TERMCOMP mode. If the analyzed Prolog source contains a line:
+%query: <pred>(<i|o|b|f|g|a>*).
+then cTI will check whether the corresponding set of queries
+terminates and answers YES or MAYBE, e.g.:
+If we add the line
+%query: app3(i,i,o,o).
+to the file Filex/testapp3.pl resulting in the file Filex/testapp3TC.pl,
+we get:
+	   $ ./cTI Filex/testapp3TC.pl 
+	   YES
+It means that app3/4 terminates if its first and second argument are ground.
+
 
 Acknowledgements:
 -----------------
 
 Fred Mesnard designed, implemented and maintains the analyzer, which
 was publicly announced on comp.lang.prolog the 22th of April 2000.
-Ulrich Neumerkel helped while debugging the system.
-Roberto Bagnara wrote the interface between cTI and the PPL.
+The first version was written in SISCTUS Prolog (SP). Ulrich Neumerkel
+helped while debugging the analyzer. Roberto Bagnara wrote the interface
+between cTI and the PPL, which is not needed for this version. Markus Triska
+wrote a Prolog version of the SP CLP(B) solver which enables the port of cTI
+from SP to SWI-Prolog. Finally, thanks to Markus Triska and Etienne Payet
+for triggering this port.
+
 
 
 --------------------------------------------------------------------
-Copyright (C) 2000+ Fred Mesnard -- frederic.mesnard@univ-reunion.fr
+Copyright (C) 2000-2020 Fred Mesnard -- frederic.mesnard@univ-reunion.fr
 ---------------------------------------------------------------------
