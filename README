@@ -23,8 +23,26 @@ SWI-Prolog >= 8
 Installing and running cTI:
 ---------------------------
 
-Inside the src/ directory, any Prolog source can be analyzed 
-from the terminal, e.g.:
+The file cTI is a Prolog script which compiles the analyzer on the fly
+and analyzes the file passed as an argument. For instance, inside the src/ directory, 
+any Prolog source can be analyzed from the terminal.
+Consider the Prolog program in Filex/testapp3.pl:
+
+	% app3(Xs, Ys, Zs, Us) iff Us is the result of concatentating the lists Xs, Ys and Zs
+	app3(Xs,Ys,Zs,Us) :- app(Xs,Ys,Vs), app(Vs,Zs,Us).
+
+	% idem but note that the atoms in the body have been swapped
+	app3bis(Xs,Ys,Zs,Us) :- app(Vs,Zs,Us), app(Xs,Ys,Vs).
+
+	% app(Xs,Ys,Zs) iff Zs is the concatenation of Xs and Ys 
+	app([],Ys,Ys).
+	app([X|Xs],Ys,[X|Zs]) :- app(Xs,Ys,Zs).
+	
+	% rev(Xs,Ys) iff Ys is Xs in the reverse order
+	rev([],[]).
+	rev([X|Xs],Zs) :- rev(Xs,Ys), app(Ys,[X],Zs).
+
+Let us ask for its terminating modes:
 
 	% ./cTI Filex/testapp3.pl    
 	...
@@ -37,7 +55,7 @@ which means that, wrt the Prolog program Filex/testapp3.pl:
 - rev/2 terminates if its first argument is ground,
 - app/3 terminates if its first or third argument is ground,
 - app3/4 terminates if either its first and fourth arguments are ground
-or its first and second argument are ground,
+  or its first and second argument are ground,
 - app3bis terminates if its fourth argument is ground.
 
 
@@ -68,17 +86,16 @@ It means that app3/4 terminates if its first and second argument are ground.
 Acknowledgements:
 -----------------
 
-Fred Mesnard designed, implemented and maintains the analyzer, which
-was publicly announced on comp.lang.prolog the 22th of April 2000.
-The first version was written in SISCTUS Prolog (SP). Ulrich Neumerkel
-helped while debugging the analyzer. Roberto Bagnara wrote the interface
-between cTI and the PPL, which is not needed for this version. Markus Triska
-wrote a Prolog version of the SP CLP(B) solver which enables the port of cTI
-from SP to SWI-Prolog. Finally, thanks to Markus Triska and Etienne Payet
-for triggering this port.
+Fred Mesnard designed and implemented the analyzer in the 90's.
+cTI was publicly announced on comp.lang.prolog the 22th of April 2000.
+The first version was written in SISCTUS Prolog (SP). 
+Ulrich Neumerkel helped while debugging the analyzer. 
+Roberto Bagnara wrote the interface between cTI and the PPL, which is not needed for this version. 
+Markus Triska wrote a SWI-Prolog version of the SP CLP(B) solver which enabled the port of cTI from SP to SWI-Prolog. 
+Finally, thanks to Markus Triska and Etienne Payet for triggering this port.
 
 
 
---------------------------------------------------------------------
-Copyright (C) 2000-2020 Fred Mesnard -- frederic.mesnard@univ-reunion.fr
----------------------------------------------------------------------
+------------------------------------------------------------------------
+Copyright (C) 2000-... Fred Mesnard -- frederic.mesnard@univ-reunion.fr
+------------------------------------------------------------------------
