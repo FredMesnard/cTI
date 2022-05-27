@@ -128,7 +128,7 @@ clpn_tc_(ListClausesClpN,Options,ListTermConds,UndefPreds,RelsInterArgsN,LevelMa
 	%nat_bool(SccsClsN,SccsClsB), 
 	nat_bool(SccsClsNSpec,SccsClsB), 
     %
-    nl,write_list(SccsClsNSpec),nl,write_list(SccsClsB),
+    %nl,write_list(SccsClsNSpec),nl,write_list(SccsClsB),
     %
 	add_stat(Stat4,pgnat_bool,Stat5),
     sccs_list(SccsClsB,ClsB),
